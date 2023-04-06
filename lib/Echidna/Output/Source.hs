@@ -27,17 +27,26 @@ import Echidna.Types.Signature (getBytecodeMetadata)
 
 type FilePathText = Text
 
-saveCoverage :: Bool -> Int -> FilePath -> SourceCache -> [SolcContract] -> CoverageMap -> IO ()
-saveCoverage isHtml seed d sc cs s = let extension = if isHtml then ".html" else ".txt"
-                                         fn = d </> "covered." <> show seed <> extension
-                                         cc = ppCoveredCode isHtml sc cs s
+data CoverageFileType = Lcov | Html | Txt deriving (Eq)
+
+coverageFileExtension :: CoverageFileType -> String
+coverageFileExtension Lcov = ".lcov"
+coverageFileExtension Html = ".html"
+coverageFileExtension Txt = ".txt"
+
+saveCoverage :: CoverageFileType -> Int -> FilePath -> SourceCache -> [SolcContract] -> CoverageMap -> IO ()
+saveCoverage fileType seed d sc cs s = let extension = coverageFileExtension fileType
+                                           fn = d </> "covered." <> show seed <> extension
+                                           isLcov = fileType == Lcov
+                                           isHtml = fileType == Html
+                                           cc = ppCoveredCode isLcov isHtml sc cs s
                                      in do
                                        createDirectoryIfMissing True d
                                        writeFile fn cc
 
 -- | Pretty-print the covered code
-ppCoveredCode :: Bool -> SourceCache -> [SolcContract] -> CoverageMap -> Text
-ppCoveredCode isHtml sc cs s | s == mempty = "Coverage map is empty"
+ppCoveredCode :: Bool -> Bool -> SourceCache -> [SolcContract] -> CoverageMap -> Text
+ppCoveredCode isLcov isHtml sc cs s | s == mempty = "Coverage map is empty"
                              | otherwise   =
   let allFiles = zipWith (\(srcPath, _rawSource) srcLines -> (srcPath, V.map decodeUtf8 srcLines))
                    sc.files
@@ -49,10 +58,11 @@ ppCoveredCode isHtml sc cs s | s == mempty = "Coverage map is empty"
       -- ^ Excludes lines such as comments or blanks
       ppFile (srcPath, srcLines) =
         let runtimeLines = fromMaybe mempty $ M.lookup srcPath runtimeLinesMap
-            marked = markLines isHtml srcLines runtimeLines (fromMaybe M.empty (M.lookup srcPath covLines))
+            marked = markLines isLcov isHtml srcLines runtimeLines (fromMaybe M.empty (M.lookup srcPath covLines))
         in T.unlines (changeFileName srcPath : changeFileLines (V.toList marked))
       -- ^ Pretty print individual file coverage
       topHeader
+        | isLcov = "TN:\n"
         | isHtml = "<style> code { white-space: pre-wrap; display: block; background-color: #eee; }" <>
                    ".executed { background-color: #afa; }" <>
                    ".reverted { background-color: #ffa; }" <>
@@ -62,23 +72,28 @@ ppCoveredCode isHtml sc cs s | s == mempty = "Coverage map is empty"
         | otherwise = ""
       -- ^ Text to add to top of the file
       changeFileName fn
+        | isLcov = "SF:" <> fn
         | isHtml = "<b>" <> HTML.text fn <> "</b>"
         | otherwise = fn
       -- ^ Alter file name, in the case of html turning it into bold text
       changeFileLines ls
+        | isLcov = ls ++ ["end_of_record"]
         | isHtml = "<code>" : ls ++ ["", "</code>","<br />"]
         | otherwise = ls
       -- ^ Alter file contents, in the case of html encasing it in <code> and adding a line break
   in topHeader <> T.unlines (map ppFile allFiles)
 
 -- | Mark one particular line, from a list of lines, keeping the order of them
-markLines :: Bool -> V.Vector Text -> S.Set Int -> M.Map Int [TxResult] -> V.Vector Text
-markLines isHtml codeLines runtimeLines resultMap =
-  V.map markLine (V.indexed codeLines)
+markLines :: Bool -> Bool -> V.Vector Text -> S.Set Int -> M.Map Int [TxResult] -> V.Vector Text
+markLines isLcov isHtml codeLines runtimeLines resultMap =
+  V.map markLine $ V.filter shouldUseLine (V.indexed codeLines)
   where
+  shouldUseLine (i, codeLine)
+    | isLcov = i + 1 `elem` runtimeLines
+    | otherwise = True
   markLine (i, codeLine) =
     let n = i + 1
-        results  = fromMaybe [] (M.lookup n resultMap)
+        results = fromMaybe [] (M.lookup n resultMap)
         markers = sort $ nub $ getMarker <$> results
         wrapLine :: Text -> Text
         wrapLine line
@@ -88,8 +103,10 @@ markLines isHtml codeLines runtimeLines resultMap =
           | otherwise = line
           where
           cssClass = if n `elem` runtimeLines then getCSSClass markers else "neutral"
-
-    in pack $ printf " %*d | %-4s| %s" lineNrSpan n markers (wrapLine codeLine)
+        result
+          | isLcov = pack $ printf "DA:%d,%d" n (length results)
+          | otherwise = pack $ printf " %*d | %-4s| %s" lineNrSpan n markers (wrapLine codeLine)
+    in result
   lineNrSpan = length . show $ V.length codeLines + 1
 
 getCSSClass :: String -> Text

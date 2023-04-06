@@ -147,14 +147,16 @@ main = withUtf8 $ withCP65001 $ do
             case r of
               Just (externalSourceCache, solcContract) -> do
                 let dir' = dir </> show addr
-                saveCoverage False runId dir' externalSourceCache [solcContract] campaign.coverage
-                saveCoverage True  runId dir' externalSourceCache [solcContract] campaign.coverage
+                saveCoverage Lcov runId dir' externalSourceCache [solcContract] campaign.coverage
+                saveCoverage Html runId dir' externalSourceCache [solcContract] campaign.coverage
+                saveCoverage Txt  runId dir' externalSourceCache [solcContract] campaign.coverage
               Nothing -> pure ()
           Nothing -> pure ()
 
       -- save source coverage reports
-      saveCoverage False runId dir sourceCache contracts campaign.coverage
-      saveCoverage True  runId dir sourceCache contracts campaign.coverage
+      saveCoverage Lcov runId dir sourceCache contracts campaign.coverage
+      saveCoverage Html runId dir sourceCache contracts campaign.coverage
+      saveCoverage Txt  runId dir sourceCache contracts campaign.coverage
 
   if isSuccessful campaign then exitSuccess else exitWith (ExitFailure 1)
 
