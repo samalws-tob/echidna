@@ -21,6 +21,7 @@ import EVM.Types (W256)
 import Echidna.Test
 import Echidna.Types.Campaign
 import Echidna.Mutator.Corpus (defaultMutationConsts)
+import Echidna.Output.Source (CoverageFileType(..))
 import Echidna.Types.Solidity
 import Echidna.Types.Tx (TxConf(TxConf), maxGasPerBlock, defaultTimeDelay, defaultBlockDelay)
 import Echidna.Types.Test (TestConf(..))
@@ -84,16 +85,17 @@ instance FromJSON EConfigWithUsage where
         pure $ TestConf classify (const psender)
 
       campaignConfParser = CampaignConf
-        <$> v ..:? "testLimit"   ..!= defaultTestLimit
-        <*> v ..:? "stopOnFail"  ..!= False
-        <*> v ..:? "estimateGas" ..!= False
-        <*> v ..:? "seqLen"      ..!= defaultSequenceLength
-        <*> v ..:? "shrinkLimit" ..!= defaultShrinkLimit
+        <$> v ..:? "testLimit"       ..!= defaultTestLimit
+        <*> v ..:? "stopOnFail"      ..!= False
+        <*> v ..:? "estimateGas"     ..!= False
+        <*> v ..:? "seqLen"          ..!= defaultSequenceLength
+        <*> v ..:? "shrinkLimit"     ..!= defaultShrinkLimit
         <*> (v ..:? "coverage" <&> \case Just False -> Nothing;  _ -> Just mempty)
         <*> v ..:? "seed"
-        <*> v ..:? "dictFreq"    ..!= 0.40
-        <*> v ..:? "corpusDir"   ..!= Nothing
-        <*> v ..:? "mutConsts"   ..!= defaultMutationConsts
+        <*> v ..:? "dictFreq"        ..!= 0.40
+        <*> v ..:? "corpusDir"       ..!= Nothing
+        <*> v ..:? "mutConsts"       ..!= defaultMutationConsts
+        <*> v ..:? "coverageFormats" ..!= [Txt,Html,Lcov]
 
       solConfParser = SolConf
         <$> v ..:? "contractAddr"    ..!= defaultContractAddr

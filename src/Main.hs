@@ -14,7 +14,7 @@ import Data.Aeson.Types (toJSONKeyText)
 import Data.ByteString qualified as BS
 import Data.ByteString.UTF8 qualified as UTF8
 import Data.Function ((&))
-import Data.Functor ((<&>))
+import Data.Functor ((<&>), void)
 import Data.IORef (newIORef, readIORef)
 import Data.List.NonEmpty qualified as NE
 import Data.Map (Map)
@@ -114,6 +114,7 @@ main = withUtf8 $ withCP65001 $ do
   slotsCache <- readIORef cacheSlotsRef
 
   -- save corpus
+  let saveCoverageInRequestedFormats a b c d e = void $ mapM (\fmt -> saveCoverage fmt a b c d e) cfg.campaignConf.coverageFormats
   case cfg.campaignConf.corpusDir of
     Nothing -> pure ()
     Just dir -> do
@@ -147,16 +148,12 @@ main = withUtf8 $ withCP65001 $ do
             case r of
               Just (externalSourceCache, solcContract) -> do
                 let dir' = dir </> show addr
-                saveCoverage Lcov runId dir' externalSourceCache [solcContract] campaign.coverage
-                saveCoverage Html runId dir' externalSourceCache [solcContract] campaign.coverage
-                saveCoverage Txt  runId dir' externalSourceCache [solcContract] campaign.coverage
+                saveCoverageInRequestedFormats runId dir' externalSourceCache [solcContract] campaign.coverage
               Nothing -> pure ()
           Nothing -> pure ()
 
-      -- save source coverage reports
-      saveCoverage Lcov runId dir sourceCache contracts campaign.coverage
-      saveCoverage Html runId dir sourceCache contracts campaign.coverage
-      saveCoverage Txt  runId dir sourceCache contracts campaign.coverage
+      -- save source coverage report
+      saveCoverageInRequestedFormats runId dir sourceCache contracts campaign.coverage
 
   if isSuccessful campaign then exitSuccess else exitWith (ExitFailure 1)
 

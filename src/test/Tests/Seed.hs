@@ -17,7 +17,7 @@ seedTests =
     , testCase "same seeds" $ assertBool "results differ" =<< same 0 0
     ]
     where cfg s = defaultConfig
-            { campaignConf = CampaignConf 600 False False 20 0 Nothing (Just s) 0.15 Nothing defaultMutationConsts }
+            { campaignConf = CampaignConf 600 False False 20 0 Nothing (Just s) 0.15 Nothing defaultMutationConsts [] }
             & overrideQuiet
           gen s = do
             camp <- runContract "basic/flags.sol" Nothing (cfg s)

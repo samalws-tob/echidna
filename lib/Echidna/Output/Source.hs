@@ -2,13 +2,14 @@ module Echidna.Output.Source where
 
 import Prelude hiding (writeFile)
 
+import Data.Aeson (ToJSON(..), FromJSON(..), withText)
 import Data.Foldable
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.List (nub, sort)
 import Data.Map qualified as M
 import Data.Sequence qualified as Seq
 import Data.Set qualified as S
-import Data.Text (Text, pack)
+import Data.Text (Text, pack, toLower)
 import Data.Text qualified as T
 import Data.Text.Encoding (decodeUtf8)
 import Data.Text.IO (writeFile)
@@ -27,7 +28,18 @@ import Echidna.Types.Signature (getBytecodeMetadata)
 
 type FilePathText = Text
 
-data CoverageFileType = Lcov | Html | Txt deriving (Eq)
+data CoverageFileType = Lcov | Html | Txt deriving (Eq, Show)
+
+instance ToJSON CoverageFileType where
+  toJSON = toJSON . show
+
+instance FromJSON CoverageFileType where
+  parseJSON = withText "CoverageFileType" $ readFn . toLower where
+    readFn "lcov" = pure Lcov
+    readFn "html" = pure Html
+    readFn "text" = pure Txt
+    readFn "txt"  = pure Txt
+    readFn _ = fail "could not parse CoverageFileType"
 
 coverageFileExtension :: CoverageFileType -> String
 coverageFileExtension Lcov = ".lcov"
@@ -88,7 +100,7 @@ markLines :: Bool -> Bool -> V.Vector Text -> S.Set Int -> M.Map Int [TxResult] 
 markLines isLcov isHtml codeLines runtimeLines resultMap =
   V.map markLine $ V.filter shouldUseLine (V.indexed codeLines)
   where
-  shouldUseLine (i, codeLine)
+  shouldUseLine (i, _)
     | isLcov = i + 1 `elem` runtimeLines
     | otherwise = True
   markLine (i, codeLine) =
