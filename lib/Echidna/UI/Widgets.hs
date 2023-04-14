@@ -8,7 +8,7 @@ import Brick
 import Brick.AttrMap qualified as A
 import Brick.Widgets.Border
 import Brick.Widgets.Center
-import Control.Monad.Reader (MonadReader, asks)
+import Control.Monad.Reader (MonadReader, asks, runReader)
 import Data.List (nub, intersperse, sortBy)
 import Data.Text qualified as T
 import Data.Version (showVersion)
@@ -68,9 +68,9 @@ data Name =
   deriving (Ord, Show, Eq)
 
 -- | Render 'Campaign' progress as a 'Widget'.
-campaignStatus :: MonadReader EConfig m => UIState -> m (Widget Name)
+campaignStatus :: MonadReader UIPrinterInfo m => UIState -> m (Widget Name)
 campaignStatus uiState = do
-  done <- isDone uiState.campaign
+  done <- runReader (isDone uiState.campaign) <$> asks (._cfg)
   case (uiState.status, done) of
     (Uninitialized, _) ->
       pure $ mainbox (padLeft (Pad 1) $ str "Starting up, please wait...") emptyWidget
@@ -162,7 +162,7 @@ failedFirst :: EchidnaTest -> EchidnaTest -> Ordering
 failedFirst t1 _ | didFail t1 = LT
                  | otherwise  = GT
 
-testsWidget :: MonadReader EConfig m => [EchidnaTest] -> m (Widget Name)
+testsWidget :: MonadReader UIPrinterInfo m => [EchidnaTest] -> m (Widget Name)
 testsWidget tests' =
   withClickableVScrollBars SBClick .
   withVScrollBars OnRight .
@@ -171,7 +171,7 @@ testsWidget tests' =
   foldl (<=>) emptyWidget . intersperse hBorder <$>
     traverse testWidget (sortBy failedFirst tests')
 
-testWidget :: MonadReader EConfig m => EchidnaTest -> m (Widget Name)
+testWidget :: MonadReader UIPrinterInfo m => EchidnaTest -> m (Widget Name)
 testWidget test =
   case test.testType of
     Exploration          -> widget tsWidget "exploration" ""
@@ -187,19 +187,19 @@ testWidget test =
       <=> padTop (Pad 1) details
   name n = bold $ str (T.unpack n)
 
-tsWidget :: MonadReader EConfig m
+tsWidget :: MonadReader UIPrinterInfo m
          => TestState -> EchidnaTest -> m (Widget Name, Widget Name)
 tsWidget (Failed e) _ = pure (str "could not evaluate", str $ show e)
 tsWidget Solved     t = failWidget Nothing t.reproducer t.events t.value t.result
 tsWidget Passed     _ = pure (withAttr (attrName "success") $ str "PASSED!", emptyWidget)
 tsWidget (Open i)   t = do
-  n <- asks (.campaignConf.testLimit)
+  n <- asks (._cfg.campaignConf.testLimit)
   if i >= n then
     tsWidget Passed t
   else
     pure (withAttr (attrName "working") $ str $ "fuzzing " ++ progress i n, emptyWidget)
 tsWidget (Large n)  t = do
-  m <- asks (.campaignConf.shrinkLimit)
+  m <- asks (._cfg.campaignConf.shrinkLimit)
   failWidget (if n < m then Just (n,m) else Nothing) t.reproducer t.events t.value t.result
 
 titleWidget :: Widget n
@@ -211,7 +211,7 @@ eventWidget es =
   else str "Event sequence" <+> str ":"
        <=> strBreak (T.unpack $ T.intercalate "\n" es)
 
-failWidget :: MonadReader EConfig m
+failWidget :: MonadReader UIPrinterInfo m
            => Maybe (Int, Int) -> [Tx] -> Events -> TestValue -> TxResult -> m (Widget Name, Widget Name)
 failWidget _ [] _  _  _= pure (failureBadge, str "*no transactions made*")
 failWidget b xs es _ r = do
@@ -222,23 +222,23 @@ failWidget b xs es _ r = do
     Nothing    -> emptyWidget
     Just (n,m) -> str "Current action: " <+> withAttr (attrName "working") (str ("shrinking " ++ progress n m))
 
-optWidget :: MonadReader EConfig m
+optWidget :: MonadReader UIPrinterInfo m
           => TestState -> EchidnaTest -> m (Widget Name, Widget Name)
 optWidget (Failed e) _ = pure (str "could not evaluate", str $ show e)
 optWidget Solved     _ = error "optimization tests cannot be solved"
 optWidget Passed     t = pure (str $ "max value found: " ++ show t.value, emptyWidget)
 optWidget (Open i)   t = do
-  n <- asks (.campaignConf.testLimit)
+  n <- asks (._cfg.campaignConf.testLimit)
   if i >= n then
     optWidget Passed t
   else
     pure (withAttr (attrName "working") $ str $ "optimizing " ++ progress i n
       ++ ", current max value: " ++ show t.value, emptyWidget)
 optWidget (Large n)  t = do
-  m <- asks (.campaignConf.shrinkLimit)
+  m <- asks (._cfg.campaignConf.shrinkLimit)
   maxWidget (if n < m then Just (n,m) else Nothing) t.reproducer t.events t.value
 
-maxWidget :: MonadReader EConfig m
+maxWidget :: MonadReader UIPrinterInfo m
            => Maybe (Int, Int) -> [Tx] -> Events -> TestValue -> m (Widget Name, Widget Name)
 maxWidget _ [] _  _ = pure (failureBadge, str "*no transactions made*")
 maxWidget b xs es v = do
@@ -249,7 +249,7 @@ maxWidget b xs es v = do
     Nothing    -> emptyWidget
     Just (n,m) -> str "Current action: " <+> withAttr (attrName "working") (str ("shrinking " ++ progress n m))
 
-seqWidget :: MonadReader EConfig m => [Tx] -> m (Widget Name)
+seqWidget :: MonadReader UIPrinterInfo m => [Tx] -> m (Widget Name)
 seqWidget xs = do
     ppTxs <- mapM (ppTx $ length (nub $ (.src) <$> xs) /= 1) xs
     let ordinals = str . printf "%d." <$> [1 :: Int ..]

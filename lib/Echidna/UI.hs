@@ -33,6 +33,7 @@ import UnliftIO.Timeout (timeout)
 import UnliftIO.Concurrent hiding (killThread, threadDelay)
 
 import EVM (VM, Contract)
+import EVM.Solidity (SolcContract)
 import EVM.Types (Addr, W256)
 
 import Echidna.ABI
@@ -63,12 +64,14 @@ ui
   -> [EchidnaTest]  -- ^ Tests to evaluate
   -> GenDict
   -> [[Tx]]
+  -> [SolcContract]
   -> m Campaign
-ui vm world ts dict initialCorpus = do
+ui vm world ts dict initialCorpus solcContracts = do
   conf <- asks (.cfg)
   ref <- liftIO $ newIORef defaultCampaign
   stop <- newEmptyMVar
   let
+    printerInfo = UIPrinterInfo conf vm solcContracts
     updateRef = do
       shouldStop <- liftIO $ isJust <$> tryReadMVar stop
       get >>= liftIO . atomicWriteIORef ref
@@ -113,7 +116,7 @@ ui vm world ts dict initialCorpus = do
             Vty.setMode (Vty.outputIface v) Vty.Mouse True
             pure v
       initialVty <- liftIO buildVty
-      app <- customMain initialVty buildVty (Just bc) <$> monitor
+      let app = customMain initialVty buildVty (Just bc) (monitor printerInfo)
       liftIO $ void $ app UIState
         { campaign = defaultCampaign
         , status = Uninitialized
@@ -123,7 +126,7 @@ ui vm world ts dict initialCorpus = do
         , displayFetchedDialog = False
         }
       final <- liftIO $ readIORef ref
-      liftIO . putStrLn $ runReader (ppCampaign final) conf
+      liftIO . putStrLn $ runReader (ppCampaign final) printerInfo
       pure final
 #else
     Interactive -> error "Interactive UI is not available"
@@ -154,7 +157,7 @@ ui vm world ts dict initialCorpus = do
         JSON ->
           liftIO . BS.putStr $ Echidna.Output.JSON.encodeCampaign final
         Text -> do
-          liftIO . putStrLn $ runReader (ppCampaign final) conf
+          liftIO . putStrLn $ runReader (ppCampaign final) printerInfo
           when timedout $ liftIO $ putStrLn "TIMEOUT!"
         None ->
           pure ()
@@ -170,15 +173,15 @@ vtyConfig = do
                            inputMap defaultConfig }
 
 -- | Check if we should stop drawing (or updating) the dashboard, then do the right thing.
-monitor :: MonadReader Env m => m (App UIState UIEvent Name)
-monitor = do
+monitor :: UIPrinterInfo -> App UIState UIEvent Name
+monitor printerInfo =
   let
-    drawUI :: EConfig -> UIState -> [Widget Name]
-    drawUI conf uiState =
+    drawUI :: UIState -> [Widget Name]
+    drawUI uiState =
       [ if uiState.displayFetchedDialog
            then fetchedDialogWidget uiState
            else emptyWidget
-      , runReader (campaignStatus uiState) conf ]
+      , runReader (campaignStatus uiState) printerInfo ]
 
     onEvent (AppEvent (CampaignUpdated c')) =
       modify' $ \state -> state { campaign = c', status = Running }
@@ -206,13 +209,12 @@ monitor = do
         _ -> pure ()
     onEvent _ = pure ()
 
-  conf <- asks (.cfg)
-  pure $ App { appDraw = drawUI conf
-             , appStartEvent = pure ()
-             , appHandleEvent = onEvent
-             , appAttrMap = const attrs
-             , appChooseCursor = neverShowCursor
-             }
+  in App { appDraw = drawUI
+         , appStartEvent = pure ()
+         , appHandleEvent = onEvent
+         , appAttrMap = const attrs
+         , appChooseCursor = neverShowCursor
+         }
 
 -- | Heuristic check that we're in a sensible terminal (not a pipe)
 isTerminal :: IO Bool

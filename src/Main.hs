@@ -107,7 +107,7 @@ main = withUtf8 $ withCP65001 $ do
 
   initialCorpus <- loadInitialCorpus env world
   -- start ui and run tests
-  campaign <- runReaderT (ui vm world echidnaTests dict initialCorpus) env
+  campaign <- runReaderT (ui vm world echidnaTests dict initialCorpus contracts) env
 
   contractsCache <- readIORef cacheContractsRef
   slotsCache <- readIORef cacheSlotsRef

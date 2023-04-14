@@ -7,8 +7,9 @@ import Data.Set (Set)
 import Data.Text (Text)
 import Data.Word (Word64)
 
-import EVM (Contract)
+import EVM (Contract, VM)
 import EVM.Dapp (DappInfo)
+import EVM.Solidity (SolcContract)
 import EVM.Types (Addr, W256)
 
 import Echidna.Types.Campaign (CampaignConf)
@@ -64,4 +65,11 @@ data Env = Env
   , fetchContractCache :: IORef (Map Addr (Maybe Contract))
   , fetchSlotCache :: IORef (Map Addr (Map W256 (Maybe W256)))
   , chainId :: Maybe W256
+  }
+
+-- TODO move this and make the names less terrible
+data UIPrinterInfo = UIPrinterInfo
+  { _cfg :: EConfig
+  , _vm :: VM
+  , _contracts :: [SolcContract]
   }
