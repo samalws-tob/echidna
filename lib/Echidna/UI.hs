@@ -71,7 +71,7 @@ ui vm world ts dict initialCorpus solcContracts = do
   ref <- liftIO $ newIORef defaultCampaign
   stop <- newEmptyMVar
   let
-    printerInfo = UIPrinterInfo conf vm solcContracts
+    printerInfo = makeUIPrinterInfo conf vm solcContracts
     updateRef = do
       shouldStop <- liftIO $ isJust <$> tryReadMVar stop
       get >>= liftIO . atomicWriteIORef ref

@@ -1,30 +1,25 @@
 module Echidna.UI.Report where
 
 import Control.Monad.Reader (MonadReader, asks)
-import Control.Lens
 import Data.List (intercalate, nub, sortOn)
 import Data.Map (toList)
 import Data.Map qualified as M
-import Data.Maybe (catMaybes, listToMaybe)
-import Data.Text (Text, unpack, splitOn)
+import Data.Maybe (catMaybes)
+import Data.Text (Text, unpack)
 import Data.Text qualified as T
 
 import Echidna.ABI (GenDict(..), encodeSig)
 import Echidna.Events (Events)
 import Echidna.Pretty (ppTxCall)
 import Echidna.Types (Gas)
-import Echidna.Types.Buffer (forceBuf)
 import Echidna.Types.Campaign
 import Echidna.Types.Corpus (Corpus, corpusSize)
 import Echidna.Types.Coverage (CoverageMap, scoveragePoints)
-import Echidna.Types.Signature (getBytecodeMetadata)
 import Echidna.Types.Test (EchidnaTest(..), TestState(..), TestType(..))
 import Echidna.Types.Tx (Tx(..), TxCall(..), TxConf(..))
 import Echidna.Types.Config
 
-import EVM (bytecode, _env, _contracts)
 import EVM.Types (W256)
-import EVM.Solidity (contractName, runtimeCode)
 
 ppCampaign :: MonadReader UIPrinterInfo m => Campaign -> m String
 ppCampaign campaign = do
@@ -47,19 +42,9 @@ ppTx _ Tx { call = NoCall, delay } =
 ppTx printName tx = do
   names <- asks (._cfg.namesConf)
   tGas  <- asks (._cfg.txConf.txGas)
-  vm    <- asks (._vm)
-  contracts <- asks (._contracts)
-  let
-    contract = M.lookup (tx.dst) (vm._env._contracts)
-    contractBytecode = getBytecodeMetadata . forceBuf . (^. bytecode) <$> contract
-    contractsWithMetadata = filter (\c -> Just (getBytecodeMetadata c.runtimeCode) == contractBytecode) contracts
-    thisSolcContract = listToMaybe contractsWithMetadata
-    thisNameFull = (.contractName) <$> thisSolcContract
-    splitted = splitOn ":" <$> thisNameFull
-    splitted' = if splitted == Just [] then Nothing else splitted
-    thisName = unpack . last <$> splitted'
+  contractNames <- asks (._contractNames)
   pure $
-    maybe "" (<> ".") thisName
+    maybe "" (<> ".") (M.lookup tx.dst contractNames)
     <> ppTxCall tx.call
     <> (if not printName then "" else names Sender tx.src <> names Receiver tx.dst)
     <> (if tx.gas == tGas then "" else " Gas: " <> show tx.gas)

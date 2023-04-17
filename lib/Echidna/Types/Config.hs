@@ -1,19 +1,23 @@
 module Echidna.Types.Config where
 
+import Control.Lens
+import Control.Monad (guard)
 import Data.Aeson.Key (Key)
 import Data.IORef (IORef)
-import Data.Map (Map)
+import Data.Map (Map, fromList, toList)
+import Data.Maybe (mapMaybe, listToMaybe)
 import Data.Set (Set)
-import Data.Text (Text)
+import Data.Text (Text, unpack, splitOn)
 import Data.Word (Word64)
 
-import EVM (Contract, VM)
+import EVM (bytecode, Contract, VM, _env, _contracts)
 import EVM.Dapp (DappInfo)
-import EVM.Solidity (SolcContract)
+import EVM.Solidity (SolcContract, runtimeCode, contractName)
 import EVM.Types (Addr, W256)
 
+import Echidna.Types.Buffer (forceBuf)
 import Echidna.Types.Campaign (CampaignConf)
-import Echidna.Types.Signature (MetadataCache)
+import Echidna.Types.Signature (MetadataCache, getBytecodeMetadata)
 import Echidna.Types.Solidity (SolConf)
 import Echidna.Types.Tx  (TxConf)
 import Echidna.Types.Test  (TestConf)
@@ -70,6 +74,17 @@ data Env = Env
 -- TODO move this and make the names less terrible
 data UIPrinterInfo = UIPrinterInfo
   { _cfg :: EConfig
-  , _vm :: VM
-  , _contracts :: [SolcContract]
+  , _contractNames :: Map Addr String
   }
+
+makeUIPrinterInfo :: EConfig -> VM -> [SolcContract] -> UIPrinterInfo
+makeUIPrinterInfo cfg vm contracts = UIPrinterInfo cfg contractNames where
+  contractNames = fromList $ mapMaybe processEntry $ toList vm._env._contracts
+  processEntry (addr, contract) = do
+    let thisMetadata = getBytecodeMetadata $ forceBuf (contract ^. bytecode)
+    let solcsWithMetadata = filter (\c -> getBytecodeMetadata c.runtimeCode == thisMetadata) contracts
+    solcContract <- listToMaybe solcsWithMetadata
+    let nameSplit = splitOn ":" solcContract.contractName
+    guard $ not (null nameSplit)
+    let name = unpack $ last nameSplit
+    pure (addr, name)
