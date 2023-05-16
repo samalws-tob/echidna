@@ -4,7 +4,7 @@ module Main where
 
 import Optics.Core (view)
 
-import Control.Concurrent (newChan)
+import Control.Concurrent (newChan, forkIO, readChan)
 import Control.Monad (unless, forM_, when)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Random (getRandomR)
@@ -18,7 +18,7 @@ import Data.IORef (newIORef, readIORef)
 import Data.List.NonEmpty qualified as NE
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, isJust)
+import Data.Maybe (fromMaybe, isJust, fromJust)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -117,6 +117,8 @@ main = withUtf8 $ withCP65001 $ do
   seed <- maybe (getRandomR (0, maxBound)) pure cfg.campaignConf.seed
   (vm, world, dict) <-
     prepareContract env contracts cliFilePath cliSelectedContract seed
+
+  forkIO $ runCorpusSaver env
 
   initialCorpus <- loadInitialCorpus env world
   -- start ui and run tests
@@ -350,3 +352,17 @@ overrideConfig config Options{..} = do
       , allContracts = cliAllContracts || solConf.allContracts
       }
 
+
+runCorpusSaver :: Env -> IO ()
+runCorpusSaver env = when (isJust env.cfg.campaignConf.corpusDir) $ loop nworkers where
+  dir = fromJust env.cfg.campaignConf.corpusDir
+  nworkers = fromIntegral $ fromMaybe 1 env.cfg.campaignConf.workers
+  loop !workersAlive = when (workersAlive > 0) $ do
+    (_, _, event) <- readChan env.eventQueue
+    doEvent event
+    case event of
+      WorkerStopped _ -> loop (workersAlive - 1)
+      _               -> loop workersAlive
+  doEvent (TestFalsified test) = saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
+  doEvent (TestOptimized test) = saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
+  doEvent _ = pure ()
