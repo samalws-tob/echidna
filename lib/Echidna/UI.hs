@@ -237,16 +237,17 @@ spawnListener
   -> Int     -- ^ number of workers
   -> MVar () -- ^ use to join this thread
   -> IO ()
-spawnListener env forwardEvent nworkers stopVar =
-  void $ forkFinally (loop nworkers) (const $ putMVar stopVar ())
+spawnListener env forwardEvent nworkers stopVar = do
+  chan <- dupChan env.eventQueue
+  void $ forkFinally (loop chan nworkers) (const $ putMVar stopVar ())
   where
-  loop !workersAlive =
+  loop !chan !workersAlive =
     when (workersAlive > 0) $ do
-      event <- readChan env.eventQueue
+      event <- readChan chan
       forwardEvent event
       case event of
-        (_, _, WorkerStopped _) -> loop (workersAlive - 1)
-        _                       -> loop workersAlive
+        (_, _, WorkerStopped _) -> loop chan (workersAlive - 1)
+        _                       -> loop chan workersAlive
 
 #ifdef INTERACTIVE_UI
  -- | Order the workers to stop immediately
@@ -283,7 +284,7 @@ monitor = do
         modify' $ \state -> state { workerEvents = state.workerEvents |> event }
 
         case campaignEvent of
-          NewCoverage coverage numCodehashes size ->
+          NewCoverage coverage numCodehashes size _ ->
             modify' $ \state ->
               state { coverage = max state.coverage coverage -- max not really needed
                     , corpusSize = size

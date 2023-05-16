@@ -4,8 +4,8 @@ module Main where
 
 import Optics.Core (view)
 
-import Control.Concurrent (newChan, forkIO, readChan)
-import Control.Monad (unless, forM_, when)
+import Control.Concurrent (newChan, forkIO, readChan, dupChan)
+import Control.Monad (unless, forM_, when, void)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Random (getRandomR)
 import Data.Aeson qualified as JSON
@@ -118,7 +118,7 @@ main = withUtf8 $ withCP65001 $ do
   (vm, world, dict) <-
     prepareContract env contracts cliFilePath cliSelectedContract seed
 
-  forkIO $ runCorpusSaver env
+  runCorpusSaver env
 
   initialCorpus <- loadInitialCorpus env world
   -- start ui and run tests
@@ -354,15 +354,19 @@ overrideConfig config Options{..} = do
 
 
 runCorpusSaver :: Env -> IO ()
-runCorpusSaver env = when (isJust env.cfg.campaignConf.corpusDir) $ loop nworkers where
+runCorpusSaver env = when (isJust env.cfg.campaignConf.corpusDir) $ dupChan env.eventQueue >>= void . forkIO . loop nworkers where
+  log s = appendFile "log.txt" (s ++ "\n")
   dir = fromJust env.cfg.campaignConf.corpusDir
   nworkers = fromIntegral $ fromMaybe 1 env.cfg.campaignConf.workers
-  loop !workersAlive = when (workersAlive > 0) $ do
-    (_, _, event) <- readChan env.eventQueue
-    doEvent event
+  loop !workersAlive !chan = {-when (workersAlive > 0) $-} do
+    log "IN LOOP"
+    (_, _, event) <- readChan chan
+    log "DOING IO" >> doEvent event >> log "DONE WITH IO"
     case event of
-      WorkerStopped _ -> loop (workersAlive - 1)
-      _               -> loop workersAlive
-  doEvent (TestFalsified test) = saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
-  doEvent (TestOptimized test) = saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
-  doEvent _ = pure ()
+      WorkerStopped _ -> loop (workersAlive - 1) chan
+      _               -> loop workersAlive chan
+  doEvent (TestFalsified test) = log "falsified" >> saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
+  doEvent (TestOptimized test) = log "optimized" >> saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
+  doEvent (NewCoverage _ _ _ []) = log "nil newcoverage"
+  doEvent (NewCoverage _ _ _ txs) = log "newcoverage" >> saveTxs (dir </> "coverageFromLoop") [txs]
+  doEvent _ = log "event was something else"
