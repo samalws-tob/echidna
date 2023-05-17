@@ -4,8 +4,8 @@ module Main where
 
 import Optics.Core (view)
 
-import Control.Concurrent (newChan, forkIO, readChan, dupChan)
-import Control.Monad (unless, forM_, when, void)
+import Control.Concurrent (newChan)
+import Control.Monad (unless, forM_, when)
 import Control.Monad.Reader (runReaderT)
 import Control.Monad.Random (getRandomR)
 import Data.Aeson qualified as JSON
@@ -18,7 +18,7 @@ import Data.IORef (newIORef, readIORef)
 import Data.List.NonEmpty qualified as NE
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, isJust, fromJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Text qualified as Text
@@ -118,6 +118,7 @@ main = withUtf8 $ withCP65001 $ do
   (vm, world, dict) <-
     prepareContract env contracts cliFilePath cliSelectedContract seed
 
+  -- get ready to save corpus in the background
   runCorpusSaver env
 
   initialCorpus <- loadInitialCorpus env world
@@ -351,22 +352,3 @@ overrideConfig config Options{..} = do
       , testMode = maybe solConf.testMode validateTestMode cliTestMode
       , allContracts = cliAllContracts || solConf.allContracts
       }
-
-
-runCorpusSaver :: Env -> IO ()
-runCorpusSaver env = when (isJust env.cfg.campaignConf.corpusDir) $ dupChan env.eventQueue >>= void . forkIO . loop nworkers where
-  log s = appendFile "log.txt" (s ++ "\n")
-  dir = fromJust env.cfg.campaignConf.corpusDir
-  nworkers = fromIntegral $ fromMaybe 1 env.cfg.campaignConf.workers
-  loop !workersAlive !chan = {-when (workersAlive > 0) $-} do
-    log "IN LOOP"
-    (_, _, event) <- readChan chan
-    log "DOING IO" >> doEvent event >> log "DONE WITH IO"
-    case event of
-      WorkerStopped _ -> loop (workersAlive - 1) chan
-      _               -> loop workersAlive chan
-  doEvent (TestFalsified test) = log "falsified" >> saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
-  doEvent (TestOptimized test) = log "optimized" >> saveTxs (dir </> "reproducersFromLoop") [test.reproducer]
-  doEvent (NewCoverage _ _ _ []) = log "nil newcoverage"
-  doEvent (NewCoverage _ _ _ txs) = log "newcoverage" >> saveTxs (dir </> "coverageFromLoop") [txs]
-  doEvent _ = log "event was something else"

@@ -237,17 +237,16 @@ spawnListener
   -> Int     -- ^ number of workers
   -> MVar () -- ^ use to join this thread
   -> IO ()
-spawnListener env forwardEvent nworkers stopVar = do
-  chan <- dupChan env.eventQueue
-  void $ forkFinally (loop chan nworkers) (const $ putMVar stopVar ())
+spawnListener env forwardEvent nworkers stopVar =
+  void $ forkFinally (loop nworkers) (const $ putMVar stopVar ())
   where
-  loop !chan !workersAlive =
+  loop !workersAlive =
     when (workersAlive > 0) $ do
-      event <- readChan chan
+      event <- readChan env.eventQueue
       forwardEvent event
       case event of
-        (_, _, WorkerStopped _) -> loop chan (workersAlive - 1)
-        _                       -> loop chan workersAlive
+        (_, _, WorkerStopped _) -> loop (workersAlive - 1)
+        _                       -> loop workersAlive
 
 #ifdef INTERACTIVE_UI
  -- | Order the workers to stop immediately
