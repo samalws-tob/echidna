@@ -11,7 +11,7 @@ import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 
 import EVM.ABI (AbiType, AbiValue)
-import EVM.Types (Addr)
+import EVM.Types (Addr, W256)
 import Data.Map (Map)
 
 -- | Name of the contract
@@ -32,7 +32,7 @@ type SolCall = (FunctionName, [AbiValue])
 type ContractA = (Addr, NonEmpty SolSignature)
 
 -- | Used to memoize results of getBytecodeMetadata
-type MetadataCache = Map ByteString ByteString
+type MetadataCache = Map W256 ByteString
 
 type SignatureMap = Map ByteString (NonEmpty SolSignature)
 
@@ -43,12 +43,12 @@ getBytecodeMetadata bs =
       Nothing     -> bs -- if no metadata is found, return the complete bytecode
       Just (_, m) -> m
 
-lookupBytecodeMetadata :: MetadataCache -> ByteString -> ByteString
-lookupBytecodeMetadata memo bs = fromMaybe (getBytecodeMetadata bs) (memo M.!? bs)
+lookupBytecodeMetadata :: MetadataCache -> W256 -> ByteString -> ByteString
+lookupBytecodeMetadata memo codehash bs = fromMaybe (getBytecodeMetadata bs) (memo M.!? codehash)
 
 -- | Precalculate getBytecodeMetadata for all contracts in a list
-makeBytecodeCache :: [ByteString] -> MetadataCache
-makeBytecodeCache bss = M.fromList $ bss `zip` (getBytecodeMetadata <$> bss)
+makeBytecodeCache :: [(W256, ByteString)] -> MetadataCache
+makeBytecodeCache bss = M.fromList $ fmap getBytecodeMetadata <$> bss
 
 knownBzzrPrefixes :: [ByteString]
 knownBzzrPrefixes =

@@ -81,7 +81,8 @@ genTx memo world txConf deployedContracts = do
     toContractA :: SignatureMap -> (Expr EAddr, Contract) -> Maybe ContractA
     toContractA sigMap (addr, c) =
       let bc = forceBuf $ fromJust $ view bytecode c
-          metadata = lookupBytecodeMetadata memo bc
+          ch = fromJust $ maybeLitWord $ c.codehash
+          metadata = lookupBytecodeMetadata memo ch bc
       in (forceAddr addr,) <$> Map.lookup metadata sigMap
 
 genDelay :: MonadRandom m => W256 -> Set W256 -> m W256

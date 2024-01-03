@@ -153,7 +153,7 @@ runWorker callback vm world dict workerId initialCorpus testLimit = do
 
   continue = runUpdate (shrinkTest vm) >> lift callback >> run
 
-  mkMemo = makeBytecodeCache . map (forceBuf . fromJust . (^. bytecode)) . Map.elems
+  mkMemo = makeBytecodeCache . map (\c -> (fromJust $ maybeLitWord c.codehash, forceBuf $ fromJust $ c ^. bytecode)) . Map.elems
 
 -- | Generate a new sequences of transactions, either using the corpus or with
 -- randomly created transactions

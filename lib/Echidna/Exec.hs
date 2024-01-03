@@ -123,7 +123,8 @@ execTxWith executeTx tx = do
                     metaCacheRef <- asks (.metadataCache)
                     metaCache <- liftIO $ readIORef metaCacheRef
                     let bc = forceBuf $ fromJust (contract ^. bytecode)
-                    liftIO $ atomicWriteIORef metaCacheRef $ Map.insert bc (getBytecodeMetadata bc) metaCache
+                    let ch = fromJust $ maybeLitWord $ contract.codehash
+                    liftIO $ atomicWriteIORef metaCacheRef $ Map.insert ch (getBytecodeMetadata bc) metaCache
 
                     fromEVM (continuation contract)
                     liftIO $ atomicWriteIORef cacheRef $ Map.insert addr (Just contract) cache
@@ -339,7 +340,8 @@ execTxWithCov tx = do
       currentMeta vm = fromMaybe (error "no contract information on coverage") $ do
         buffer <- vm ^? #env % #contracts % at vm.state.codeContract % _Just % bytecode
         let bc = forceBuf $ fromJust buffer
-        pure $ lookupBytecodeMetadata cache bc
+        ch <- vm ^? #env % #contracts % at vm.state.codeContract % _Just % #codehash >>= maybeLitWord
+        pure $ lookupBytecodeMetadata cache ch bc
 
 initialVM :: Bool -> ST s (VM s)
 initialVM ffi = do
