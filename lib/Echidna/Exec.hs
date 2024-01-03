@@ -35,7 +35,7 @@ import Echidna.Symbolic (forceBuf)
 import Echidna.Transaction
 import Echidna.Types (ExecException(..), Gas, fromEVM, emptyAccount)
 import Echidna.Types.Config (Env(..), EConfig(..), UIConf(..), OperationMode(..), OutputFormat(Text))
-import Echidna.Types.Signature (getBytecodeMetadata, lookupBytecodeMetadata)
+import Echidna.Types.Signature (getBytecodeMetadata, lookupBytecodeMetadataIO)
 import Echidna.Types.Solidity (SolConf(..))
 import Echidna.Types.Tx (TxCall(..), Tx, TxResult(..), call, dst, initialTimestamp, initialBlockNumber, getResult)
 import Echidna.Utility (getTimestamp, timePrefix)
@@ -248,11 +248,11 @@ execTxWithCov
 execTxWithCov tx = do
   covRef <- asks (.coverageRef)
   metaCacheRef <- asks (.metadataCache)
-  cache <- liftIO $ readIORef metaCacheRef
+  -- cache <- liftIO $ readIORef metaCacheRef -- TODO remove
 
   covContextRef <- liftIO $ newIORef (False, Nothing)
 
-  r <- execTxWith (execCov covRef covContextRef cache) tx
+  r <- execTxWith (execCov covRef covContextRef metaCacheRef) tx
 
   (grew, lastLoc) <- liftIO $ readIORef covContextRef
 
@@ -274,7 +274,7 @@ execTxWithCov tx = do
   pure (r, grew || grew')
   where
     -- the same as EVM.exec but collects coverage, will stop on a query
-    execCov covRef covContextRef cache = do
+    execCov covRef covContextRef metaCacheRef = do
       vm <- get
       (r, vm') <- liftIO $ loop vm
       put vm'
@@ -296,7 +296,7 @@ execTxWithCov tx = do
       addCoverage :: VM RealWorld -> IO ()
       addCoverage !vm = do
         let (pc, opIx, depth) = currentCovLoc vm
-            meta = currentMeta vm
+        meta <- currentMeta vm
         cov <- readIORef covRef
         case Map.lookup meta cov of
           Nothing -> do
@@ -337,11 +337,11 @@ execTxWithCov tx = do
       currentCovLoc vm = (vm.state.pc, fromMaybe 0 $ vmOpIx vm, length vm.frames)
 
       -- | Get the current contract's bytecode metadata
-      currentMeta vm = fromMaybe (error "no contract information on coverage") $ do
-        buffer <- vm ^? #env % #contracts % at vm.state.codeContract % _Just % bytecode
+      currentMeta vm = do
+        let buffer = fromJust $ vm ^? #env % #contracts % at vm.state.codeContract % _Just % bytecode
         let bc = forceBuf $ fromJust buffer
-        ch <- vm ^? #env % #contracts % at vm.state.codeContract % _Just % #codehash >>= maybeLitWord
-        pure $ lookupBytecodeMetadata cache ch bc
+        let ch = fromJust $ vm ^? #env % #contracts % at vm.state.codeContract % _Just % #codehash >>= maybeLitWord
+        lookupBytecodeMetadataIO metaCacheRef ch bc
 
 initialVM :: Bool -> ST s (VM s)
 initialVM ffi = do

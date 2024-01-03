@@ -164,7 +164,7 @@ randseq
   -> m [Tx]
 randseq deployedContracts world = do
   env <- ask
-  memo <- liftIO $ readIORef env.metadataCache
+  -- memo <- liftIO $ readIORef env.metadataCache -- TODO remove
 
   let
     mutConsts = env.cfg.campaignConf.mutConsts
@@ -175,7 +175,7 @@ randseq deployedContracts world = do
   --let rs = filter (not . null) $ map (.testReproducer) $ ca._tests
 
   -- Generate new random transactions
-  randTxs <- replicateM seqLen (genTx memo world txConf deployedContracts)
+  randTxs <- replicateM seqLen (genTx env.metadataCache world txConf deployedContracts)
   -- Generate a random mutator
   cmut <- if seqLen == 1 then seqMutatorsStateless (fromConsts mutConsts)
                          else seqMutatorsStateful (fromConsts mutConsts)

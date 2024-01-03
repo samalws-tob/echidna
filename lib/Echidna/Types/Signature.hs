@@ -2,6 +2,7 @@
 
 module Echidna.Types.Signature where
 
+import Control.Monad.IO.Class (MonadIO, liftIO)
 import Data.ByteString (ByteString)
 import Data.ByteString qualified as BS
 import Data.Foldable (find)
@@ -9,6 +10,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as M
 import Data.Maybe (fromMaybe)
 import Data.Text (Text)
+import Data.IORef (IORef, readIORef, atomicWriteIORef)
 
 import EVM.ABI (AbiType, AbiValue)
 import EVM.Types (Addr, W256)
@@ -45,6 +47,9 @@ getBytecodeMetadata bs =
 
 lookupBytecodeMetadata :: MetadataCache -> W256 -> ByteString -> ByteString
 lookupBytecodeMetadata memo codehash bs = fromMaybe (getBytecodeMetadata bs) (memo M.!? codehash)
+
+lookupBytecodeMetadataIO :: (MonadIO m) => IORef MetadataCache -> W256 -> ByteString -> m ByteString
+lookupBytecodeMetadataIO memoRef codehash bs = (\memo -> maybe (let meta = getBytecodeMetadata bs in liftIO (atomicWriteIORef memoRef (M.insert codehash meta memo)) >> pure meta) pure (memo M.!? codehash)) =<< liftIO (readIORef memoRef)
 
 -- | Precalculate getBytecodeMetadata for all contracts in a list
 makeBytecodeCache :: [(W256, ByteString)] -> MetadataCache
