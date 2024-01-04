@@ -7,6 +7,7 @@ import Prelude hiding (writeFile)
 import Data.Aeson (ToJSON(..), FromJSON(..), withText)
 import Data.ByteString qualified as BS
 import Data.Foldable
+import Data.IORef (IORef)
 import Data.List (nub, sort)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Map (Map)
@@ -29,31 +30,33 @@ import EVM.Solidity (SourceCache(..), SrcMap, SolcContract(..))
 
 import Echidna.Types.Coverage (OpIx, unpackTxResults, CoverageMap)
 import Echidna.Types.Tx (TxResult(..))
-import Echidna.Types.Signature (getBytecodeMetadata)
+import Echidna.Types.Signature (lookupBytecodeMetadataIO, MetadataCache)
 
 saveCoverages
-  :: [CoverageFileType]
+  :: IORef MetadataCache
+  -> [CoverageFileType]
   -> Int
   -> FilePath
   -> SourceCache
   -> [SolcContract]
   -> CoverageMap
   -> IO ()
-saveCoverages fileTypes seed d sc cs s =
-  mapM_ (\ty -> saveCoverage ty seed d sc cs s) fileTypes
+saveCoverages cache fileTypes seed d sc cs s =
+  mapM_ (\ty -> saveCoverage cache ty seed d sc cs s) fileTypes
 
 saveCoverage
-  :: CoverageFileType
+  :: IORef MetadataCache
+  -> CoverageFileType
   -> Int
   -> FilePath
   -> SourceCache
   -> [SolcContract]
   -> CoverageMap
   -> IO ()
-saveCoverage fileType seed d sc cs covMap = do
+saveCoverage cache fileType seed d sc cs covMap = do
   let extension = coverageFileExtension fileType
       fn = d </> "covered." <> show seed <> extension
-  cc <- ppCoveredCode fileType sc cs covMap
+  cc <- ppCoveredCode cache fileType sc cs covMap
   createDirectoryIfMissing True d
   writeFile fn cc
 
@@ -76,11 +79,11 @@ coverageFileExtension Html = ".html"
 coverageFileExtension Txt = ".txt"
 
 -- | Pretty-print the covered code
-ppCoveredCode :: CoverageFileType -> SourceCache -> [SolcContract] -> CoverageMap -> IO Text
-ppCoveredCode fileType sc cs s | null s = pure "Coverage map is empty"
+ppCoveredCode :: IORef MetadataCache -> CoverageFileType -> SourceCache -> [SolcContract] -> CoverageMap -> IO Text
+ppCoveredCode cache fileType sc cs s | null s = pure "Coverage map is empty"
   | otherwise = do
   -- List of covered lines during the fuzzing campaing
-  covLines <- srcMapCov sc s cs
+  covLines <- srcMapCov cache sc s cs
   let
     -- Collect all the possible lines from all the files
     allFiles = (\(path, src) -> (path, V.fromList (decodeUtf8 <$> BS.split 0xa src))) <$> Map.elems sc.files
@@ -157,13 +160,14 @@ getMarker ErrorOutOfGas = 'o'
 getMarker _             = 'e'
 
 -- | Given a source cache, a coverage map, a contract returns a list of covered lines
-srcMapCov :: SourceCache -> CoverageMap -> [SolcContract] -> IO (Map FilePath (Map Int [TxResult]))
-srcMapCov sc covMap contracts = do
+srcMapCov :: IORef MetadataCache -> SourceCache -> CoverageMap -> [SolcContract] -> IO (Map FilePath (Map Int [TxResult]))
+srcMapCov cache sc covMap contracts = do
   Map.unionsWith Map.union <$> mapM linesCovered contracts
   where
   linesCovered :: SolcContract -> IO (Map FilePath (Map Int [TxResult]))
-  linesCovered c =
-    case Map.lookup (getBytecodeMetadata c.runtimeCode) covMap of
+  linesCovered c = do
+    bcid <- lookupBytecodeMetadataIO cache c.runtimeCodehash c.runtimeCode
+    case Map.lookup bcid covMap of
       Just vec -> VU.foldl' (\acc covInfo -> case covInfo of
         (-1, _, _) -> acc -- not covered
         (opIx, _stackDepths, txResults) ->

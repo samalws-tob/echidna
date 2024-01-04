@@ -168,12 +168,12 @@ main = withUtf8 $ withCP65001 $ do
                 case r of
                   Just (externalSourceCache, solcContract) -> do
                     let dir' = dir </> show addr
-                    saveCoverages cfg.campaignConf.coverageFormats runId dir' externalSourceCache [solcContract] coverage
+                    saveCoverages cacheMetaRef cfg.campaignConf.coverageFormats runId dir' externalSourceCache [solcContract] coverage
                   Nothing -> pure ()
               Nothing -> pure ()
 
         -- save source coverage reports
-        saveCoverages cfg.campaignConf.coverageFormats runId dir buildOutput.sources contracts coverage
+        saveCoverages cacheMetaRef cfg.campaignConf.coverageFormats runId dir buildOutput.sources contracts coverage
 
   if isSuccessful tests then exitSuccess else exitWith (ExitFailure 1)
 

@@ -43,7 +43,7 @@ import Echidna.Symbolic (forceAddr)
 import Echidna.Test (createTests, isAssertionMode, isPropertyMode, isDapptestMode)
 import Echidna.Types.Config (EConfig(..), Env(..))
 import Echidna.Types.Signature
-  (ContractName, SolSignature, SignatureMap, getBytecodeMetadata)
+  (ContractName, SolSignature, SignatureMap, lookupBytecodeMetadataIO)
 import Echidna.Types.Solidity
 import Echidna.Types.Test (EchidnaTest(..))
 import Echidna.Types.Tx
@@ -211,19 +211,21 @@ loadSpecified env name cs = do
                        abiOf solConf.prefix mainContract
     -- Filter again for dapptest tests or assertions checking if enabled
     neFuns = filterMethods mainContract.contractName solConf.methodFilter (fallback NE.:| funs)
-    -- Construct ABI mapping for World
-    abiMapping =
-      if solConf.allContracts then
-        Map.fromList $ mapMaybe (\contract ->
-            let filtered = filterMethods contract.contractName
-                                         solConf.methodFilter
-                                         (abiOf solConf.prefix contract)
-            in (getBytecodeMetadata contract.runtimeCode,) <$> NE.nonEmpty filtered)
-          cs
-      else
-        case NE.nonEmpty fabiOfc of
-          Just ne -> Map.singleton (getBytecodeMetadata mainContract.runtimeCode) ne
-          Nothing -> mempty
+
+  -- Construct ABI mapping for World
+  abiMapping <-
+    if solConf.allContracts then
+      -- TODO why do I need two mapMaybes?? the original only had one
+      fmap (Map.fromList . mapMaybe id . mapMaybe id) $ mapM (\contract ->
+          let filtered = filterMethods contract.contractName
+                                       solConf.methodFilter
+                                       (abiOf solConf.prefix contract)
+          in (\res -> pure $ (res,) <$> (NE.nonEmpty filtered)) <$> lookupBytecodeMetadataIO env.metadataCache contract.runtimeCodehash contract.runtimeCode)
+        cs
+    else
+      case NE.nonEmpty fabiOfc of
+        Just ne -> (\res -> Map.singleton res ne) <$> (lookupBytecodeMetadataIO env.metadataCache mainContract.runtimeCodehash mainContract.runtimeCode)
+        Nothing -> mempty
 
   -- Set up initial VM, either with chosen contract or Etheno initialization file
   -- need to use snd to add to ABI dict

@@ -140,6 +140,9 @@
             packages = _: [ (echidna pkgs) ];
             shellHook = "hpack";
             buildInputs = [
+              secp256k1
+              libff
+              gmp
               solc
               slither-analyzer
               haskellPackages.hlint

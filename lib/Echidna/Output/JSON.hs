@@ -24,6 +24,7 @@ import Echidna.Types.Coverage (CoverageInfo)
 import Echidna.Types.Test qualified as T
 import Echidna.Types.Test (EchidnaTest(..))
 import Echidna.Types.Tx (Tx(..), TxCall(..))
+import Echidna.Types.Signature (unBytecodeMetadataID)
 
 data Campaign = Campaign
   { _success :: Bool
@@ -102,6 +103,8 @@ encodeCampaign :: Env -> [WorkerState] -> IO L.ByteString
 encodeCampaign env workerStates = do
   tests <- readIORef env.testsRef
   frozenCov <- mapM VU.freeze =<< readIORef env.coverageRef
+  let coverage0 = Map.toList $ VU.toList <$> frozenCov
+  coverage <- mapM (\(k,v) -> (,v) <$> unBytecodeMetadataID env.metadataCache k) coverage0
   -- TODO: this is ugly, refactor seed to live in Env
   let worker0 = Prelude.head workerStates
   pure $ encode Campaign
@@ -109,7 +112,7 @@ encodeCampaign env workerStates = do
     , _error = Nothing
     , _tests = mapTest <$> tests
     , seed = worker0.genDict.defSeed
-    , coverage = Map.mapKeys (("0x" ++) . (`showHex` "") . keccak') $ VU.toList <$> frozenCov
+    , coverage = Map.mapKeys (("0x" ++) . (`showHex` "") . keccak') $ Map.fromList coverage
     , gasInfo = Map.toList $ Map.unionsWith max ((.gasInfo) <$> workerStates)
     }
 
