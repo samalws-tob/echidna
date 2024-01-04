@@ -10,7 +10,7 @@ import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as M
 import Data.Text (Text)
 import Data.Maybe (fromJust)
-import Data.IORef (IORef, readIORef, atomicWriteIORef, newIORef, atomicModifyIORef')
+import Data.IORef (IORef, readIORef, atomicWriteIORef, newIORef, atomicModifyIORef', modifyIORef')
 
 import EVM.ABI (AbiType, AbiValue)
 import EVM.Types (Addr, W256)
@@ -58,7 +58,7 @@ lookupBytecodeMetadataIO r@(MetadataCacheRef ref) codehash bs = do
   MetadataCacheInside to _ _ _ <- liftIO $ readIORef ref
   case (Map.lookup codehash to) of
     (Just res) -> pure res
-    Nothing -> cacheMeta r codehash bs
+    Nothing -> cacheMeta r codehash bs >> lookupBytecodeMetadataIO r codehash bs
 
 unBytecodeMetadataID :: (MonadIO m) => MetadataCacheRef -> BytecodeMetadataID -> m ByteString
 unBytecodeMetadataID (MetadataCacheRef ref) idLookingFor = do
@@ -66,15 +66,15 @@ unBytecodeMetadataID (MetadataCacheRef ref) idLookingFor = do
   pure $ fromJust $ Map.lookup idLookingFor from
 
 -- returns the id
-cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m BytecodeMetadataID
-cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = liftIO $ atomicModifyIORef' metaCacheRef f where
+cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m () -- BytecodeMetadataID
+cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = liftIO $ modifyIORef' metaCacheRef f where
   f old@(MetadataCacheInside to _ _ _) = case (Map.lookup codehash to) of
-    (Just val) -> (old, val)
+    (Just val) -> old -- (old, val)
     Nothing -> g old
   g (MetadataCacheInside to to2 from highest) = let bcm = getBytecodeMetadata bs in case (Map.lookup bcm to2) of
-    (Just val) -> (modifyLittle to to2 from highest bcm val, val)
+    (Just val) -> (modifyLittle to to2 from highest bcm val) -- , val)
     Nothing -> modify to to2 from highest bcm
-  modify to to2 from highest bcm = let newid = highest+1 in (,newid) $ MetadataCacheInside (Map.insert codehash newid to) (Map.insert bcm newid to2) (Map.insert newid bcm from) newid
+  modify to to2 from highest bcm = let newid = highest+1 in {-(,newid) $-} MetadataCacheInside (Map.insert codehash newid to) (Map.insert bcm newid to2) (Map.insert newid bcm from) newid
   modifyLittle to to2 from highest bcm val = MetadataCacheInside (Map.insert codehash val to) to2 from highest
 
 -- | Precalculate getBytecodeMetadata for all contracts in a list
