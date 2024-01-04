@@ -46,7 +46,7 @@ import Echidna.Test (checkETest)
 import Echidna.Types (Gas)
 import Echidna.Types.Config (Env(..), EConfig(..), EConfigWithUsage(..))
 import Echidna.Types.Campaign
-import Echidna.Types.Signature (ContractName)
+import Echidna.Types.Signature (ContractName, newMetadataCacheRef)
 import Echidna.Types.Solidity (SolConf(..))
 import Echidna.Types.Test
 import Echidna.Types.Tx (Tx(..), TxCall(..), call)
@@ -97,7 +97,7 @@ runContract f selectedContract cfg = do
     buildOutput = selectBuildOutput selectedContract buildOutputs
     contracts = Map.elems . Map.unions $ (\(BuildOutput (Contracts c) _) -> c) <$> buildOutputs
 
-  metadataCache <- newIORef mempty
+  metadataCache <- newMetadataCacheRef
   fetchContractCache <- newIORef mempty
   fetchSlotCache <- newIORef mempty
   coverageRef <- newIORef mempty
@@ -161,7 +161,7 @@ testContract' fp n v configPath s expectations = testCase fp $ withSolcVersion v
 
 checkConstructorConditions :: FilePath -> String -> TestTree
 checkConstructorConditions fp as = testCase fp $ do
-  cacheMeta <- newIORef mempty
+  cacheMeta <- newMetadataCacheRef
   cacheContracts <- newIORef mempty
   cacheSlots <- newIORef mempty
   coverageRef <- newIORef mempty
