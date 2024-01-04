@@ -8,6 +8,7 @@ import Control.Monad (void)
 import Control.Monad.Catch (catch)
 import Data.List.NonEmpty (NonEmpty(..))
 import Data.Text (Text)
+import Echidna.Types.Signature (newMetadataCacheRef)
 import Echidna.Types.Solidity (SolException(..))
 import Echidna.Solidity (loadSolTests)
 import Echidna.Types.Config (Env(..))
@@ -42,7 +43,7 @@ compilationTests = testGroup "Compilation and loading tests"
 loadFails :: FilePath -> Maybe Text -> String -> (SolException -> Bool) -> TestTree
 loadFails fp c e p = testCase fp . catch tryLoad $ assertBool e . p where
   tryLoad = do
-    cacheMeta <- newIORef mempty
+    cacheMeta <- newMetadataCacheRef
     cacheContracts <- newIORef mempty
     cacheSlots <- newIORef mempty
     eventQueue <- newChan
