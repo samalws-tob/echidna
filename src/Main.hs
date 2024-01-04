@@ -44,6 +44,7 @@ import Echidna.Config
 import Echidna.Symbolic (forceBuf)
 import Echidna.Types.Campaign
 import Echidna.Types.Config
+import Echidna.Types.Signature (newMetadataCacheRef)
 import Echidna.Types.Solidity
 import Echidna.Types.Test (TestMode, EchidnaTest(..))
 import Echidna.Test (validateTestMode)
@@ -89,7 +90,7 @@ main = withUtf8 $ withCP65001 $ do
   buildOutputs <- compileContracts cfg.solConf cliFilePath
   cacheContractsRef <- newIORef $ fromMaybe mempty loadedContractsCache
   cacheSlotsRef <- newIORef $ fromMaybe mempty loadedSlotsCache
-  cacheMetaRef <- newIORef mempty
+  cacheMetaRef <- newMetadataCacheRef
   chainId <- RPC.fetchChainId cfg.rpcUrl
   eventQueue <- newChan
   coverageRef <- newIORef mempty

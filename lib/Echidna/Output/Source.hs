@@ -7,7 +7,6 @@ import Prelude hiding (writeFile)
 import Data.Aeson (ToJSON(..), FromJSON(..), withText)
 import Data.ByteString qualified as BS
 import Data.Foldable
-import Data.IORef (IORef)
 import Data.List (nub, sort)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Map (Map)
@@ -30,10 +29,10 @@ import EVM.Solidity (SourceCache(..), SrcMap, SolcContract(..))
 
 import Echidna.Types.Coverage (OpIx, unpackTxResults, CoverageMap)
 import Echidna.Types.Tx (TxResult(..))
-import Echidna.Types.Signature (lookupBytecodeMetadataIO, MetadataCache)
+import Echidna.Types.Signature (lookupBytecodeMetadataIO, MetadataCacheRef)
 
 saveCoverages
-  :: IORef MetadataCache
+  :: MetadataCacheRef
   -> [CoverageFileType]
   -> Int
   -> FilePath
@@ -45,7 +44,7 @@ saveCoverages cache fileTypes seed d sc cs s =
   mapM_ (\ty -> saveCoverage cache ty seed d sc cs s) fileTypes
 
 saveCoverage
-  :: IORef MetadataCache
+  :: MetadataCacheRef
   -> CoverageFileType
   -> Int
   -> FilePath
@@ -79,7 +78,7 @@ coverageFileExtension Html = ".html"
 coverageFileExtension Txt = ".txt"
 
 -- | Pretty-print the covered code
-ppCoveredCode :: IORef MetadataCache -> CoverageFileType -> SourceCache -> [SolcContract] -> CoverageMap -> IO Text
+ppCoveredCode :: MetadataCacheRef -> CoverageFileType -> SourceCache -> [SolcContract] -> CoverageMap -> IO Text
 ppCoveredCode cache fileType sc cs s | null s = pure "Coverage map is empty"
   | otherwise = do
   -- List of covered lines during the fuzzing campaing
@@ -160,7 +159,7 @@ getMarker ErrorOutOfGas = 'o'
 getMarker _             = 'e'
 
 -- | Given a source cache, a coverage map, a contract returns a list of covered lines
-srcMapCov :: IORef MetadataCache -> SourceCache -> CoverageMap -> [SolcContract] -> IO (Map FilePath (Map Int [TxResult]))
+srcMapCov :: MetadataCacheRef -> SourceCache -> CoverageMap -> [SolcContract] -> IO (Map FilePath (Map Int [TxResult]))
 srcMapCov cache sc covMap contracts = do
   Map.unionsWith Map.union <$> mapM linesCovered contracts
   where

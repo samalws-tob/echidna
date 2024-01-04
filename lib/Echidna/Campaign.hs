@@ -17,7 +17,7 @@ import Control.Monad.ST (RealWorld)
 import Control.Monad.Trans (lift)
 import Data.Binary.Get (runGetOrFail)
 import Data.ByteString.Lazy qualified as LBS
-import Data.IORef (readIORef, writeIORef, atomicModifyIORef')
+import Data.IORef (readIORef, atomicModifyIORef')
 import Data.Map qualified as Map
 import Data.Map (Map, (\\))
 import Data.Maybe (isJust, mapMaybe, fromMaybe, fromJust)
@@ -43,7 +43,7 @@ import Echidna.Types.Campaign
 import Echidna.Types.Corpus (Corpus, corpusSize)
 import Echidna.Types.Coverage (scoveragePoints)
 import Echidna.Types.Config
-import Echidna.Types.Signature (makeBytecodeCache, FunctionName)
+import Echidna.Types.Signature (initBytecodeCache, FunctionName)
 import Echidna.Types.Test
 import Echidna.Types.Test qualified as Test
 import Echidna.Types.Tx (TxCall(..), Tx(..), call)
@@ -91,7 +91,7 @@ runWorker callback vm world dict workerId initialCorpus testLimit = do
   fetchContractCacheRef <- asks (.fetchContractCache)
   external <- liftIO $ Map.mapMaybe id <$> readIORef fetchContractCacheRef
   let concretizeKeys = Map.foldrWithKey (Map.insert . forceAddr) mempty
-  liftIO $ writeIORef metaCacheRef (mkMemo (concretizeKeys vm.env.contracts <> external))
+  mkMemo metaCacheRef (concretizeKeys vm.env.contracts <> external)
 
   let
     effectiveSeed = dict.defSeed + workerId
@@ -153,7 +153,7 @@ runWorker callback vm world dict workerId initialCorpus testLimit = do
 
   continue = runUpdate (shrinkTest vm) >> lift callback >> run
 
-  mkMemo = makeBytecodeCache . map (\c -> (fromJust $ maybeLitWord c.codehash, forceBuf $ fromJust $ c ^. bytecode)) . Map.elems
+  mkMemo ref = initBytecodeCache ref . map (\c -> (fromJust $ maybeLitWord c.codehash, forceBuf $ fromJust $ c ^. bytecode)) . Map.elems
 
 -- | Generate a new sequences of transactions, either using the corpus or with
 -- randomly created transactions

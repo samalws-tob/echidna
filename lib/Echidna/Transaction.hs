@@ -11,7 +11,6 @@ import Control.Monad.Random.Strict (MonadRandom, getRandomR, uniform)
 import Control.Monad.State.Strict (MonadState, gets, modify', execState)
 import Control.Monad.ST (RealWorld)
 import Control.Monad.IO.Class (MonadIO)
-import Data.IORef (IORef)
 import Data.Map (Map, toList)
 import Data.Map qualified as Map
 import Data.Maybe (mapMaybe, fromJust)
@@ -29,7 +28,7 @@ import Echidna.Symbolic (forceBuf, forceWord, forceAddr)
 import Echidna.Types (fromEVM)
 import Echidna.Types.Random
 import Echidna.Types.Signature
-  (SignatureMap, SolCall, ContractA, MetadataCache, lookupBytecodeMetadataIO)
+  (SignatureMap, SolCall, ContractA, MetadataCacheRef, lookupBytecodeMetadataIO)
 import Echidna.Types.Tx
 import Echidna.Types.World (World(..))
 import Echidna.Types.Campaign
@@ -56,7 +55,7 @@ getSignatures hmm (Just lmm) =
 -- | Generate a random 'Transaction' with either synthesis or mutation of dictionary entries.
 genTx
   :: (MonadRandom m, MonadState WorkerState m, MonadIO m)
-  => IORef MetadataCache
+  => MetadataCacheRef
   -> World
   -> TxConf
   -> Map (Expr EAddr) Contract

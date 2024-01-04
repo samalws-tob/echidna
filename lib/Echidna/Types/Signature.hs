@@ -9,7 +9,7 @@ import Data.Foldable (find)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as M
 import Data.Text (Text)
-import Data.IORef (IORef, readIORef, atomicWriteIORef)
+import Data.IORef (IORef, readIORef, atomicWriteIORef, newIORef)
 
 import EVM.ABI (AbiType, AbiValue)
 import EVM.Types (Addr, W256)
@@ -35,7 +35,11 @@ type ContractA = (Addr, NonEmpty SolSignature)
 newtype BytecodeMetadataID = BytecodeMetadataID ByteString deriving (Show, Eq, Ord)
 
 -- | Used to memoize results of getBytecodeMetadata
-type MetadataCache = Map W256 BytecodeMetadataID
+newtype MetadataCacheInside = MetadataCacheInside (Map W256 BytecodeMetadataID)
+
+unMetadataCacheInside (MetadataCacheInside m) = m
+
+newtype MetadataCacheRef = MetadataCacheRef { unMetadataCacheRef :: IORef MetadataCacheInside }
 
 type SignatureMap = Map BytecodeMetadataID (NonEmpty SolSignature)
 
@@ -51,20 +55,23 @@ lookupBytecodeMetadata :: MetadataCache -> W256 -> ByteString -> BytecodeMetadat
 lookupBytecodeMetadata memo codehash bs = fromMaybe (getBytecodeMetadata_renamed bs) (memo M.!? codehash)
 -}
 
-lookupBytecodeMetadataIO :: (MonadIO m) => IORef MetadataCache -> W256 -> ByteString -> m BytecodeMetadataID
-lookupBytecodeMetadataIO memoRef codehash bs = (\memo -> maybe (let meta = BytecodeMetadataID (getBytecodeMetadata_renamed bs) in liftIO (atomicWriteIORef memoRef (M.insert codehash meta memo)) >> pure meta) pure (memo M.!? codehash)) =<< liftIO (readIORef memoRef)
+lookupBytecodeMetadataIO :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m BytecodeMetadataID
+lookupBytecodeMetadataIO (MetadataCacheRef memoRef) codehash bs = (\memo -> maybe (let meta = BytecodeMetadataID (getBytecodeMetadata_renamed bs) in liftIO (atomicWriteIORef memoRef (MetadataCacheInside $ M.insert codehash meta memo)) >> pure meta) pure (memo M.!? codehash)) =<< liftIO (unMetadataCacheInside <$> readIORef memoRef)
 
-unBytecodeMetadataID :: (MonadIO m) => IORef MetadataCache -> BytecodeMetadataID -> m ByteString
+unBytecodeMetadataID :: (MonadIO m) => MetadataCacheRef -> BytecodeMetadataID -> m ByteString
 unBytecodeMetadataID _ (BytecodeMetadataID bs) = pure bs
 
-cacheMeta :: (MonadIO m) => IORef MetadataCache -> W256 -> ByteString -> m ()
-cacheMeta metaCacheRef codehash bs = do
-  metaCache <- liftIO $ readIORef metaCacheRef
-  liftIO $ atomicWriteIORef metaCacheRef $ insert codehash (BytecodeMetadataID $ getBytecodeMetadata_renamed bs) metaCache
+cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m ()
+cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = do
+  metaCache <- fmap unMetadataCacheInside $ liftIO $ readIORef metaCacheRef
+  liftIO $ atomicWriteIORef metaCacheRef $ MetadataCacheInside $ insert codehash (BytecodeMetadataID $ getBytecodeMetadata_renamed bs) metaCache
 
 -- | Precalculate getBytecodeMetadata for all contracts in a list
-makeBytecodeCache :: [(W256, ByteString)] -> MetadataCache
-makeBytecodeCache bss = M.fromList $ fmap (BytecodeMetadataID . getBytecodeMetadata_renamed) <$> bss
+initBytecodeCache :: (MonadIO m) => MetadataCacheRef -> [(W256, ByteString)] -> m ()
+initBytecodeCache (MetadataCacheRef ref) bss = liftIO $ atomicWriteIORef ref $ MetadataCacheInside $ M.fromList $ fmap (BytecodeMetadataID . getBytecodeMetadata_renamed) <$> bss
+
+newMetadataCacheRef :: (MonadIO m) => m MetadataCacheRef
+newMetadataCacheRef = liftIO $ fmap MetadataCacheRef $ newIORef $ MetadataCacheInside mempty
 
 knownBzzrPrefixes :: [ByteString]
 knownBzzrPrefixes =
