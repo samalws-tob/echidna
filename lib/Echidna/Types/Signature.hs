@@ -9,11 +9,13 @@ import Data.Foldable (find)
 import Data.List.NonEmpty (NonEmpty)
 import Data.Map.Strict qualified as M
 import Data.Text (Text)
-import Data.IORef (IORef, readIORef, atomicWriteIORef, newIORef)
+import Data.Maybe (fromJust)
+import Data.IORef (IORef, readIORef, atomicWriteIORef, newIORef, atomicModifyIORef')
 
 import EVM.ABI (AbiType, AbiValue)
 import EVM.Types (Addr, W256)
-import Data.Map (Map, insert)
+import Data.Map (Map)
+import Data.Map qualified as Map
 
 -- | Name of the contract
 type ContractName = Text
@@ -32,14 +34,12 @@ type SolCall = (FunctionName, [AbiValue])
 -- | A contract is just an address with an ABI (for our purposes).
 type ContractA = (Addr, NonEmpty SolSignature)
 
-newtype BytecodeMetadataID = BytecodeMetadataID ByteString deriving (Show, Eq, Ord)
+type BytecodeMetadataID = Int
 
 -- | Used to memoize results of getBytecodeMetadata
-newtype MetadataCacheInside = MetadataCacheInside (Map W256 BytecodeMetadataID)
+data MetadataCacheInside = MetadataCacheInside !(Map W256 BytecodeMetadataID) !(Map ByteString BytecodeMetadataID) !(Map BytecodeMetadataID ByteString) !Int
 
-unMetadataCacheInside (MetadataCacheInside m) = m
-
-newtype MetadataCacheRef = MetadataCacheRef { unMetadataCacheRef :: IORef MetadataCacheInside }
+newtype MetadataCacheRef = MetadataCacheRef (IORef MetadataCacheInside)
 
 type SignatureMap = Map BytecodeMetadataID (NonEmpty SolSignature)
 
@@ -56,22 +56,45 @@ lookupBytecodeMetadata memo codehash bs = fromMaybe (getBytecodeMetadata_renamed
 -}
 
 lookupBytecodeMetadataIO :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m BytecodeMetadataID
-lookupBytecodeMetadataIO (MetadataCacheRef memoRef) codehash bs = (\memo -> maybe (let meta = BytecodeMetadataID (getBytecodeMetadata_renamed bs) in liftIO (atomicWriteIORef memoRef (MetadataCacheInside $ M.insert codehash meta memo)) >> pure meta) pure (memo M.!? codehash)) =<< liftIO (unMetadataCacheInside <$> readIORef memoRef)
+-- lookupBytecodeMetadataIO = cacheMeta -- TODO -- (MetadataCacheRef memoRef) codehash bs = (\memo -> maybe (let meta = BytecodeMetadataID (getBytecodeMetadata_renamed bs) in liftIO (atomicWriteIORef memoRef (MetadataCacheInside $ M.insert codehash meta memo)) >> pure meta) pure (memo M.!? codehash)) =<< liftIO (unMetadataCacheInside <$> readIORef memoRef)
+lookupBytecodeMetadataIO r@(MetadataCacheRef ref) codehash bs = do
+  MetadataCacheInside to _ _ _ <- liftIO $ readIORef ref
+  case (Map.lookup codehash to) of
+    (Just res) -> pure res
+    Nothing -> cacheMeta r codehash bs
 
 unBytecodeMetadataID :: (MonadIO m) => MetadataCacheRef -> BytecodeMetadataID -> m ByteString
-unBytecodeMetadataID _ (BytecodeMetadataID bs) = pure bs
+unBytecodeMetadataID (MetadataCacheRef ref) idLookingFor = do
+  MetadataCacheInside _ _ from _ <- liftIO $ readIORef ref
+  pure $ fromJust $ Map.lookup idLookingFor from
 
+{-
 cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m ()
 cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = do
-  metaCache <- fmap unMetadataCacheInside $ liftIO $ readIORef metaCacheRef
+  metaCache <- liftIO $ readIORef metaCacheRef
+  let a = toIDMap metaCache
+  let b = fromIDMap metaCache
   liftIO $ atomicWriteIORef metaCacheRef $ MetadataCacheInside $ insert codehash (BytecodeMetadataID $ getBytecodeMetadata_renamed bs) metaCache
+-}
+-- returns the id
+cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m BytecodeMetadataID
+cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = liftIO $ atomicModifyIORef' metaCacheRef f where
+  f old@(MetadataCacheInside to _ _ _) = case (Map.lookup codehash to) of
+    (Just val) -> (old, val)
+    Nothing -> g old
+  g (MetadataCacheInside to to2 from highest) = let bcm = getBytecodeMetadata_renamed bs in case (Map.lookup bcm to2) of
+    (Just val) -> (modifyLittle to to2 from highest bcm val, val)
+    Nothing -> modify to to2 from highest bcm
+  modify to to2 from highest bcm = let newid = highest+1 in (,newid) $ MetadataCacheInside (Map.insert codehash newid to) (Map.insert bcm newid to2) (Map.insert newid bcm from) newid
+  modifyLittle to to2 from highest bcm val = MetadataCacheInside (Map.insert codehash val to) to2 from highest
 
 -- | Precalculate getBytecodeMetadata for all contracts in a list
 initBytecodeCache :: (MonadIO m) => MetadataCacheRef -> [(W256, ByteString)] -> m ()
-initBytecodeCache (MetadataCacheRef ref) bss = liftIO $ atomicWriteIORef ref $ MetadataCacheInside $ M.fromList $ fmap (BytecodeMetadataID . getBytecodeMetadata_renamed) <$> bss
+-- initBytecodeCache (MetadataCacheRef ref) bss = liftIO $ atomicWriteIORef ref $ MetadataCacheInside $ M.fromList $ fmap (BytecodeMetadataID . getBytecodeMetadata_renamed) <$> bss
+initBytecodeCache ref bss = mapM_ (\(a,b) -> cacheMeta ref a b) bss
 
 newMetadataCacheRef :: (MonadIO m) => m MetadataCacheRef
-newMetadataCacheRef = liftIO $ fmap MetadataCacheRef $ newIORef $ MetadataCacheInside mempty
+newMetadataCacheRef = liftIO $ fmap MetadataCacheRef $ newIORef $ MetadataCacheInside mempty mempty mempty 0
 
 knownBzzrPrefixes :: [ByteString]
 knownBzzrPrefixes =
