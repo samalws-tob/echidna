@@ -16,6 +16,7 @@ import Data.Bits
 import Data.ByteString qualified as BS
 import Data.IORef (readIORef, atomicWriteIORef, atomicModifyIORef', newIORef, writeIORef, modifyIORef')
 import Data.Map qualified as Map
+import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (fromMaybe, fromJust)
 import Data.Text qualified as T
 import Data.Vector qualified as V
@@ -261,7 +262,7 @@ execTxWithCov tx = do
   grew' <- liftIO $ case lastLoc of
     Just (meta, pc) -> do
       cov <- readIORef covRef
-      case Map.lookup meta cov of
+      case IntMap.lookup meta cov of
         Nothing -> pure False -- shouldn't happen
         Just vec -> do
           let txResultBit = fromEnum $ getResult $ fst r
@@ -299,7 +300,7 @@ execTxWithCov tx = do
         let (pc, opIx, depth) = currentCovLoc vm
         meta <- currentMeta vm
         cov <- readIORef covRef
-        case Map.lookup meta cov of
+        case IntMap.lookup meta cov of
           Nothing -> do
             let size = BS.length . forceBuf . fromJust . view bytecode . fromJust $
                   Map.lookup vm.state.contract vm.env.contracts
@@ -310,8 +311,8 @@ execTxWithCov tx = do
 
               vec' <- atomicModifyIORef' covRef $ \cm ->
                 -- this should reduce races
-                case Map.lookup meta cm of
-                  Nothing -> (Map.insert meta vec cm, vec)
+                case IntMap.lookup meta cm of
+                  Nothing -> (IntMap.insert meta vec cm, vec)
                   Just vec' -> (cm, vec')
 
               VMut.write vec' pc (opIx, fromIntegral depth, 0 `setBit` fromEnum Stop)

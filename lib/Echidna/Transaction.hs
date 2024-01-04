@@ -13,6 +13,7 @@ import Control.Monad.ST (RealWorld)
 import Control.Monad.IO.Class (MonadIO)
 import Data.Map (Map, toList)
 import Data.Map qualified as Map
+import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (mapMaybe, fromJust)
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -84,7 +85,7 @@ genTx memoRef world txConf deployedContracts = do
       let bc = forceBuf $ fromJust $ view bytecode c
           ch = fromJust $ maybeLitWord $ c.codehash
       metadata <- lookupBytecodeMetadataIO memoRef ch bc
-      pure $ (forceAddr addr,) <$> Map.lookup metadata sigMap
+      pure $ (forceAddr addr,) <$> IntMap.lookup metadata sigMap
 
 genDelay :: MonadRandom m => W256 -> Set W256 -> m W256
 genDelay mv ds = do

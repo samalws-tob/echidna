@@ -7,12 +7,14 @@ import Data.Map.Strict (Map)
 import Data.Vector.Unboxed.Mutable (IOVector)
 import Data.Vector.Unboxed.Mutable qualified as V
 import Data.Word (Word64)
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 
 import Echidna.Types.Tx (TxResult)
 import Echidna.Types.Signature (BytecodeMetadataID)
 
 -- | Map with the coverage information needed for fuzzing and source code printing
-type CoverageMap = Map BytecodeMetadataID (IOVector CoverageInfo)
+type CoverageMap = IntMap (IOVector CoverageInfo)
 
 -- | Basic coverage information
 type CoverageInfo = (OpIx, StackDepths, TxResults)
@@ -31,7 +33,7 @@ type TxResults = Word64
 -- This is useful to report a coverage measure to the user
 scoveragePoints :: CoverageMap -> IO Int
 scoveragePoints cm = do
-  sum <$> mapM (V.foldl' countCovered 0) (Map.elems cm)
+  sum <$> mapM (V.foldl' countCovered 0) (IntMap.elems cm)
 
 countCovered :: Int -> CoverageInfo -> Int
 countCovered acc (opIx,_,_) = if opIx == -1 then acc else acc + 1

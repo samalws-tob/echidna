@@ -7,6 +7,7 @@ import Data.List (find)
 import Data.List.NonEmpty (NonEmpty)
 import Data.List.NonEmpty qualified as NE
 import Data.Map.Strict qualified as Map
+import Data.IntMap.Strict qualified as IntMap
 import Data.Set qualified as Set
 import System.FilePath ((</>))
 
@@ -92,7 +93,7 @@ prepareContract env contracts solFiles specifiedContract seed = do
 loadInitialCorpus :: Env -> World -> IO [[Tx]]
 loadInitialCorpus env world = do
   -- load transactions from init sequence (if any)
-  let sigs = Set.fromList $ concatMap NE.toList (Map.elems world.highSignatureMap)
+  let sigs = Set.fromList $ concatMap NE.toList (IntMap.elems world.highSignatureMap)
   ethenoCorpus <-
     case env.cfg.solConf.initialize of
       Nothing -> pure []

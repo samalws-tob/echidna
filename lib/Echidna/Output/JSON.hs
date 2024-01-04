@@ -8,6 +8,7 @@ import Data.ByteString.Lazy qualified as L
 import Data.IORef (readIORef)
 import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.IntMap.Strict qualified as IntMap
 import Data.Text
 import Data.Text.Encoding (decodeUtf8)
 import Data.Vector.Unboxed qualified as VU
@@ -103,7 +104,7 @@ encodeCampaign :: Env -> [WorkerState] -> IO L.ByteString
 encodeCampaign env workerStates = do
   tests <- readIORef env.testsRef
   frozenCov <- mapM VU.freeze =<< readIORef env.coverageRef
-  let coverage0 = Map.toList $ VU.toList <$> frozenCov
+  let coverage0 = IntMap.toList $ VU.toList <$> frozenCov
   coverage <- mapM (\(k,v) -> (,v) <$> unBytecodeMetadataID env.metadataCache k) coverage0
   -- TODO: this is ugly, refactor seed to live in Env
   let worker0 = Prelude.head workerStates

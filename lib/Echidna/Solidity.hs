@@ -13,6 +13,7 @@ import Data.List.NonEmpty (NonEmpty((:|)))
 import Data.List.NonEmpty qualified as NE
 import Data.List.NonEmpty.Extra qualified as NEE
 import Data.Map qualified as Map
+import Data.IntMap.Strict qualified as IntMap
 import Data.Maybe (isJust, isNothing, catMaybes, listToMaybe, mapMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
@@ -216,7 +217,7 @@ loadSpecified env name cs = do
   abiMapping <-
     if solConf.allContracts then
       -- TODO why do I need two mapMaybes?? the original only had one
-      fmap (Map.fromList . mapMaybe id . mapMaybe id) $ mapM (\contract ->
+      fmap (IntMap.fromList . mapMaybe id . mapMaybe id) $ mapM (\contract ->
           let filtered = filterMethods contract.contractName
                                        solConf.methodFilter
                                        (abiOf solConf.prefix contract)
@@ -224,7 +225,7 @@ loadSpecified env name cs = do
         cs
     else
       case NE.nonEmpty fabiOfc of
-        Just ne -> (\res -> Map.singleton res ne) <$> (lookupBytecodeMetadataIO env.metadataCache mainContract.runtimeCodehash mainContract.runtimeCode)
+        Just ne -> (\res -> IntMap.singleton res ne) <$> (lookupBytecodeMetadataIO env.metadataCache mainContract.runtimeCodehash mainContract.runtimeCode)
         Nothing -> mempty
 
   -- Set up initial VM, either with chosen contract or Etheno initialization file
@@ -332,7 +333,7 @@ filterFallbacks
   -> [ContractName]
   -> SignatureMap
   -> SignatureMap
-filterFallbacks _ [] [] sm = Map.map f sm
+filterFallbacks _ [] [] sm = IntMap.map f sm
   where f ss = NE.fromList $ case NE.filter (/= fallback) ss of
                 []  -> [fallback] -- No other alternative
                 ss' -> ss'
@@ -347,16 +348,16 @@ prepareHashMaps [] _  m = (m, Nothing) -- No constant functions detected
 prepareHashMaps cs as m =
   let
     (hm, lm) =
-      ( Map.unionWith NEE.union (filterHashMap not cs m) (filterHashMap id as m)
+      ( IntMap.unionWith NEE.union (filterHashMap not cs m) (filterHashMap id as m)
       , filterHashMap id cs m )
   in
-    if | Map.size hm > 0  && Map.size lm > 0  -> (hm, Just lm) -- Usual case
-       | Map.size hm > 0  && Map.size lm == 0 -> (hm, Nothing) -- No low-priority functions detected
-       | Map.size hm == 0 && Map.size lm > 0  -> (m,  Nothing) -- No high-priority functions detected
+    if | IntMap.size hm > 0  && IntMap.size lm > 0  -> (hm, Just lm) -- Usual case
+       | IntMap.size hm > 0  && IntMap.size lm == 0 -> (hm, Nothing) -- No low-priority functions detected
+       | IntMap.size hm == 0 && IntMap.size lm > 0  -> (m,  Nothing) -- No high-priority functions detected
        | otherwise                        -> error "Error processing function hashmaps"
   where
     filterHashMap f xs =
-      Map.mapMaybe (NE.nonEmpty . NE.filter (\s -> f $ (hashSig . encodeSig $ s) `elem` xs))
+      IntMap.mapMaybe (NE.nonEmpty . NE.filter (\s -> f $ (hashSig . encodeSig $ s) `elem` xs))
 
 -- | Given a file and an optional contract name, compile the file as solidity, then, if a name is
 -- given, try to fine the specified contract (assuming it is in the file provided), otherwise, find

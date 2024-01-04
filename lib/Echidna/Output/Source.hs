@@ -11,6 +11,8 @@ import Data.List (nub, sort)
 import Data.Maybe (fromMaybe, mapMaybe)
 import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 import Data.Sequence qualified as Seq
 import Data.Set qualified as S
 import Data.Text (Text, pack, toLower)
@@ -166,7 +168,7 @@ srcMapCov cache sc covMap contracts = do
   linesCovered :: SolcContract -> IO (Map FilePath (Map Int [TxResult]))
   linesCovered c = do
     bcid <- lookupBytecodeMetadataIO cache c.runtimeCodehash c.runtimeCode
-    case Map.lookup bcid covMap of
+    case IntMap.lookup bcid covMap of
       Just vec -> VU.foldl' (\acc covInfo -> case covInfo of
         (-1, _, _) -> acc -- not covered
         (opIx, _stackDepths, txResults) ->

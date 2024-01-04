@@ -16,6 +16,8 @@ import EVM.ABI (AbiType, AbiValue)
 import EVM.Types (Addr, W256)
 import Data.Map (Map)
 import Data.Map qualified as Map
+import Data.IntMap.Strict (IntMap)
+import Data.IntMap.Strict qualified as IntMap
 
 -- | Name of the contract
 type ContractName = Text
@@ -37,26 +39,21 @@ type ContractA = (Addr, NonEmpty SolSignature)
 type BytecodeMetadataID = Int
 
 -- | Used to memoize results of getBytecodeMetadata
+-- values: (codehash -> ID), (bytecode metadata -> ID), (ID -> bytecode metadata), highest ID number
 data MetadataCacheInside = MetadataCacheInside !(Map W256 BytecodeMetadataID) !(Map ByteString BytecodeMetadataID) !(Map BytecodeMetadataID ByteString) !Int
 
 newtype MetadataCacheRef = MetadataCacheRef (IORef MetadataCacheInside)
 
-type SignatureMap = Map BytecodeMetadataID (NonEmpty SolSignature)
+type SignatureMap = IntMap (NonEmpty SolSignature)
 
-getBytecodeMetadata_renamed :: ByteString -> ByteString
-getBytecodeMetadata_renamed bs =
+getBytecodeMetadata :: ByteString -> ByteString
+getBytecodeMetadata bs =
   let stripCandidates = flip BS.breakSubstring bs <$> knownBzzrPrefixes in
     case find ((/= mempty) . snd) stripCandidates of
       Nothing     -> bs -- if no metadata is found, return the complete bytecode
       Just (_, m) -> m
 
-{-
-lookupBytecodeMetadata :: MetadataCache -> W256 -> ByteString -> BytecodeMetadataID
-lookupBytecodeMetadata memo codehash bs = fromMaybe (getBytecodeMetadata_renamed bs) (memo M.!? codehash)
--}
-
 lookupBytecodeMetadataIO :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m BytecodeMetadataID
--- lookupBytecodeMetadataIO = cacheMeta -- TODO -- (MetadataCacheRef memoRef) codehash bs = (\memo -> maybe (let meta = BytecodeMetadataID (getBytecodeMetadata_renamed bs) in liftIO (atomicWriteIORef memoRef (MetadataCacheInside $ M.insert codehash meta memo)) >> pure meta) pure (memo M.!? codehash)) =<< liftIO (unMetadataCacheInside <$> readIORef memoRef)
 lookupBytecodeMetadataIO r@(MetadataCacheRef ref) codehash bs = do
   MetadataCacheInside to _ _ _ <- liftIO $ readIORef ref
   case (Map.lookup codehash to) of
@@ -68,21 +65,13 @@ unBytecodeMetadataID (MetadataCacheRef ref) idLookingFor = do
   MetadataCacheInside _ _ from _ <- liftIO $ readIORef ref
   pure $ fromJust $ Map.lookup idLookingFor from
 
-{-
-cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m ()
-cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = do
-  metaCache <- liftIO $ readIORef metaCacheRef
-  let a = toIDMap metaCache
-  let b = fromIDMap metaCache
-  liftIO $ atomicWriteIORef metaCacheRef $ MetadataCacheInside $ insert codehash (BytecodeMetadataID $ getBytecodeMetadata_renamed bs) metaCache
--}
 -- returns the id
 cacheMeta :: (MonadIO m) => MetadataCacheRef -> W256 -> ByteString -> m BytecodeMetadataID
 cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = liftIO $ atomicModifyIORef' metaCacheRef f where
   f old@(MetadataCacheInside to _ _ _) = case (Map.lookup codehash to) of
     (Just val) -> (old, val)
     Nothing -> g old
-  g (MetadataCacheInside to to2 from highest) = let bcm = getBytecodeMetadata_renamed bs in case (Map.lookup bcm to2) of
+  g (MetadataCacheInside to to2 from highest) = let bcm = getBytecodeMetadata bs in case (Map.lookup bcm to2) of
     (Just val) -> (modifyLittle to to2 from highest bcm val, val)
     Nothing -> modify to to2 from highest bcm
   modify to to2 from highest bcm = let newid = highest+1 in (,newid) $ MetadataCacheInside (Map.insert codehash newid to) (Map.insert bcm newid to2) (Map.insert newid bcm from) newid
@@ -90,7 +79,6 @@ cacheMeta (MetadataCacheRef metaCacheRef) codehash bs = liftIO $ atomicModifyIOR
 
 -- | Precalculate getBytecodeMetadata for all contracts in a list
 initBytecodeCache :: (MonadIO m) => MetadataCacheRef -> [(W256, ByteString)] -> m ()
--- initBytecodeCache (MetadataCacheRef ref) bss = liftIO $ atomicWriteIORef ref $ MetadataCacheInside $ M.fromList $ fmap (BytecodeMetadataID . getBytecodeMetadata_renamed) <$> bss
 initBytecodeCache ref bss = mapM_ (\(a,b) -> cacheMeta ref a b) bss
 
 newMetadataCacheRef :: (MonadIO m) => m MetadataCacheRef
