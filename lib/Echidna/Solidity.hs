@@ -43,7 +43,7 @@ import Echidna.Symbolic (forceAddr)
 import Echidna.Test (createTests, isAssertionMode, isPropertyMode, isDapptestMode)
 import Echidna.Types.Config (EConfig(..), Env(..))
 import Echidna.Types.Signature
-  (ContractName, SolSignature, SignatureMap, getBytecodeMetadata)
+  (ContractName, SolSignature, SignatureMap)
 import Echidna.Types.Solidity
 import Echidna.Types.Test (EchidnaTest(..))
 import Echidna.Types.Tx
@@ -218,11 +218,11 @@ loadSpecified env name cs = do
             let filtered = filterMethods contract.contractName
                                          solConf.methodFilter
                                          (abiOf solConf.prefix contract)
-            in (getBytecodeMetadata contract.runtimeCode,) <$> NE.nonEmpty filtered)
+            in (contract.runtimeCodehash,) <$> NE.nonEmpty filtered)
           cs
       else
         case NE.nonEmpty fabiOfc of
-          Just ne -> Map.singleton (getBytecodeMetadata mainContract.runtimeCode) ne
+          Just ne -> Map.singleton mainContract.runtimeCodehash ne
           Nothing -> mempty
 
   -- Set up initial VM, either with chosen contract or Etheno initialization file
