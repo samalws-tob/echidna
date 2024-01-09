@@ -2,8 +2,6 @@
 
 module Main where
 
-import Optics.Core (view)
-
 import Control.Concurrent (newChan)
 import Control.Monad (unless, forM_, when)
 import Control.Monad.Reader (runReaderT)
@@ -18,7 +16,7 @@ import Data.IORef (newIORef, readIORef)
 import Data.List.NonEmpty qualified as NE
 import Data.Map (Map)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, isJust, fromJust)
+import Data.Maybe (fromMaybe, isJust)
 import Data.Set qualified as Set
 import Data.Text (Text)
 import Data.Time.Clock.System (getSystemTime, systemSeconds)
@@ -34,14 +32,13 @@ import System.FilePath ((</>))
 import System.IO (hPutStrLn, stderr)
 import System.IO.CodePage (withCP65001)
 
-import EVM (bytecode)
 import EVM.Dapp (dappInfo)
 import EVM.Solidity (SolcContract(..), SourceCache(..), BuildOutput(..), Contracts(..))
 import EVM.Types (Addr, Contract(..), keccak', W256)
 
 import Echidna
 import Echidna.Config
-import Echidna.Symbolic (forceBuf)
+import Echidna.Symbolic (bytecode)
 import Echidna.Types.Campaign
 import Echidna.Types.Config
 import Echidna.Types.Solidity
@@ -183,7 +180,7 @@ main = withUtf8 $ withCP65001 $ do
   -- code fetched from the outside
   externalSolcContract :: Addr -> Contract -> IO (Maybe (SourceCache, SolcContract))
   externalSolcContract addr c = do
-    let runtimeCode = forceBuf $ fromJust $ view bytecode c
+    let runtimeCode = bytecode c
     putStr $ "Fetching Solidity source for contract at address " <> show addr <> "... "
     srcRet <- Etherscan.fetchContractSource addr
     putStrLn $ if isJust srcRet then "Success!" else "Error!"

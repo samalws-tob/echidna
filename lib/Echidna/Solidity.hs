@@ -7,6 +7,7 @@ import Control.Monad.Catch (MonadThrow(..))
 import Control.Monad.Extra (whenM)
 import Control.Monad.Reader (ReaderT(runReaderT))
 import Control.Monad.ST (stToIO, RealWorld)
+import Control.Monad.State.Strict (runStateT)
 import Data.Foldable (toList)
 import Data.List (find, partition, isSuffixOf, (\\))
 import Data.List.NonEmpty (NonEmpty((:|)))
@@ -37,7 +38,7 @@ import Echidna.ABI
 import Echidna.Deploy (deployContracts, deployBytecodes)
 import Echidna.Etheno (loadEthenoBatch)
 import Echidna.Events (EventMap, extractEvents)
-import Echidna.Exec (execTx, initialVM)
+import Echidna.Exec (execTx, execTxWithCov, initialVM)
 import Echidna.Processor
 import Echidna.Symbolic (forceAddr)
 import Echidna.Test (createTests, isAssertionMode, isPropertyMode, isDapptestMode)
@@ -267,13 +268,13 @@ loadSpecified env name cs = do
     vm2 <- deployBytecodes solConf.deployBytecodes solConf.deployer vm1
 
     -- main contract deployment
-    let deployment = execTx vm2 $ createTxWithValue
-                                    mainContract.creationCode
-                                    solConf.deployer
-                                    solConf.contractAddr
-                                    unlimitedGasPerBlock
-                                    (fromIntegral solConf.balanceContract)
-                                    (0, 0)
+    let deployment = flip runStateT vm2 $ execTxWithCov $ createTxWithValue
+                                                          mainContract.creationCode
+                                                          solConf.deployer
+                                                          solConf.contractAddr
+                                                          unlimitedGasPerBlock
+                                                          (fromIntegral solConf.balanceContract)
+                                                          (0, 0)
     (_, vm3) <- deployment
     when (isNothing $ currentContract vm3) $
       throwM $ DeploymentFailed solConf.contractAddr $ T.unlines $ extractEvents True env.dapp vm3

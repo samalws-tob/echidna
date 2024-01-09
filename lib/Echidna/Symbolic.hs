@@ -4,7 +4,8 @@
 module Echidna.Symbolic where
 
 import Data.ByteString (ByteString)
-import EVM.Types (Expr(..), EType(..), W256, Addr)
+import EVM.Types (Expr(..), EType(..), W256, Addr, Contract(..), ContractCode(..), RuntimeCode(..))
+import EVM.Expr qualified as Expr
 
 forceBuf :: Expr Buf -> ByteString
 forceBuf b = case b of
@@ -21,3 +22,10 @@ forceAddr :: Expr EAddr -> Addr
 forceAddr x = case x of
   LitAddr x' -> x'
   _ -> error $ "expected LitAddr: " <> show x
+
+bytecode :: Contract -> ByteString
+bytecode = f . (.code)
+  where f (InitCode bs _) = bs
+        f (RuntimeCode (ConcreteRuntimeCode bs)) = bs
+        f (RuntimeCode (SymbolicRuntimeCode ops)) = forceBuf $ Expr.fromList ops 
+        f (UnknownCode _) = error "TODO"

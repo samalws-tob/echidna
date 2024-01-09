@@ -16,13 +16,13 @@ import Data.Bits
 import Data.ByteString qualified as BS
 import Data.IORef (readIORef, atomicWriteIORef, newIORef, writeIORef, modifyIORef')
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, fromJust)
+import Data.Maybe (fromMaybe)
 import Data.Text qualified as T
 import Data.Vector qualified as V
 import Data.Vector.Unboxed.Mutable qualified as VMut
 import System.Process (readProcessWithExitCode)
 
-import EVM (bytecode, replaceCodeOfSelf, loadContract, exec1, vmOpIx)
+import EVM (replaceCodeOfSelf, loadContract, exec1, vmOpIx)
 import EVM.ABI
 import EVM.Exec (exec, vmForEthrunCreation)
 import EVM.Fetch qualified
@@ -31,7 +31,7 @@ import EVM.Types hiding (Env)
 
 import Echidna.Events (emptyEvents)
 import Echidna.RPC (safeFetchContractFrom, safeFetchSlotFrom)
-import Echidna.Symbolic (forceBuf)
+import Echidna.Symbolic (bytecode)
 import Echidna.Transaction
 import Echidna.Types (ExecException(..), Gas, fromEVM, emptyAccount)
 import Echidna.Types.Config (Env(..), EConfig(..), UIConf(..), OperationMode(..), OutputFormat(Text))
@@ -288,7 +288,7 @@ execTxWithCov tx = do
             contract = currentContract vm
 
         maybeMetaVec <- lookupUsingCodehashOrInsert env.codehashMap contract env.dapp env.coverageRef $ do
-          let size = BS.length . forceBuf . fromJust . view bytecode $ contract
+          let size = BS.length . bytecode $ contract
           if size == 0 then pure Nothing else do
             -- IO for making a new vec
             vec <- VMut.new size
