@@ -25,15 +25,17 @@ import Data.ByteString.Lazy qualified as BS
 import Data.List.Split (chunksOf)
 import Data.Map (Map)
 import Data.Maybe (fromMaybe, isJust)
+import Data.Text (Text)
 import Data.Time
 import UnliftIO
   ( MonadUnliftIO, newIORef, readIORef, hFlush, stdout , writeIORef, timeout)
 import UnliftIO.Concurrent hiding (killThread, threadDelay)
 
 import EVM.Types (Addr, Contract, VM, W256)
+import EVM.Solidity (SolcContract)
 
 import Echidna.ABI
-import Echidna.Campaign (runWorker, spawnListener)
+import Echidna.Campaign (runSymWorker, runWorker, spawnListener)
 import Echidna.Output.Corpus (saveCorpusEvent)
 import Echidna.Output.JSON qualified
 import Echidna.Server (runSSEServer)
@@ -61,8 +63,10 @@ ui
   -> World   -- ^ Initial world state
   -> GenDict
   -> [(FilePath, [Tx])]
+  -> Maybe Text
+  -> [SolcContract]
   -> m [WorkerState]
-ui vm world dict initialCorpus = do
+ui vm world dict initialCorpus name cs = do
   env <- ask
   conf <- asks (.cfg)
   terminalPresent <- liftIO isTerminal
@@ -88,6 +92,8 @@ ui vm world dict initialCorpus = do
 
   workers <- forM (zip corpusChunks [0..(nworkers-1)]) $
     uncurry (spawnWorker env perWorkerTestLimit)
+
+  spawnSymWorker env perWorkerTestLimit 0
 
   case effectiveMode of
 #ifdef INTERACTIVE_UI
@@ -220,6 +226,29 @@ ui vm world dict initialCorpus = do
           maybeResult <- timeout timeoutUsecs $
             runWorker (get >>= writeIORef stateRef)
                       vm world dict workerId corpusChunk testLimit
+          pure $ case maybeResult of
+            Just (stopReason, _finalState) -> stopReason
+            Nothing -> TimeLimitReached
+        )
+        [ Handler $ \(e :: AsyncException) -> pure $ Killed (show e)
+        , Handler $ \(e :: SomeException)  -> pure $ Crashed (show e)
+        ]
+
+      time <- liftIO getTimestamp
+      writeChan env.eventQueue (time, WorkerEvent workerId (WorkerStopped stopReason))
+
+    pure (threadId, stateRef)
+
+  spawnSymWorker env testLimit workerId = do
+    stateRef <- newIORef initialWorkerState
+
+    threadId <- forkIO $ do
+      -- TODO: maybe figure this out with forkFinally?
+      stopReason <- catches (do
+          let timeoutUsecs = maybe (-1) (*1_000_000) env.cfg.uiConf.maxTime
+          maybeResult <- timeout timeoutUsecs $
+            runSymWorker
+                      vm workerId name cs dict
           pure $ case maybeResult of
             Just (stopReason, _finalState) -> stopReason
             Nothing -> TimeLimitReached

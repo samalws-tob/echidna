@@ -28,7 +28,7 @@ import System.IO (hPutStrLn, stderr)
 import System.IO.CodePage (withCP65001)
 
 import EVM.Dapp (DappInfo(..))
-import EVM.Solidity (BuildOutput(..))
+import EVM.Solidity (BuildOutput(..), Contracts(..))
 import EVM.Types (Addr)
 
 import Echidna
@@ -64,12 +64,13 @@ main = withUtf8 $ withCP65001 $ do
 
   -- take the seed from config, otherwise generate a new one
   seed <- maybe (getRandomR (0, maxBound)) pure cfg.campaignConf.seed
-  (vm, world, dict, symTxs) <- prepareContract env cliFilePath cliSelectedContract seed
+  (vm, world, dict) <- prepareContract env cliFilePath cliSelectedContract seed
 
   initialCorpus <- loadInitialCorpus env world
-  let corpus = initialCorpus <> (pure . pure <$> symTxs)
+  let corpus = initialCorpus
+  let (Contracts contractMap) = buildOutput.contracts
   -- start ui and run tests
-  _campaign <- runReaderT (ui vm world dict corpus) env
+  _campaign <- runReaderT (ui vm world dict corpus cliSelectedContract (Map.elems contractMap)) env -- TODO can we move this elems call elsewhere?
 
   tests <- readIORef env.testsRef
 
