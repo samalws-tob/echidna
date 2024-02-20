@@ -114,8 +114,8 @@ runContract f selectedContract cfg = do
                 , eventQueue
                 , testsRef
                 , chainId = Nothing }
-  (vm, world, dict, symTxs) <- prepareContract env contracts (f :| []) selectedContract seed
-  let corpus = pure <$> symTxs
+  (vm, world, dict) <- prepareContract env contracts (f :| []) selectedContract seed
+  let corpus = pure <$> [] -- symTxs -- TODO
   (_stopReason, finalState) <- flip runReaderT env $
     runWorker (pure ()) vm world dict 0 corpus cfg.campaignConf.testLimit
 

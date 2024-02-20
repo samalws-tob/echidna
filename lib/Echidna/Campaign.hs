@@ -6,6 +6,7 @@ module Echidna.Campaign where
 import Optics.Core hiding ((|>))
 
 import Control.Concurrent (writeChan)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
 import Control.DeepSeq (force)
 import Control.Monad (replicateM, when, void, forM_)
 import Control.Monad.Catch (MonadThrow(..))
@@ -18,6 +19,7 @@ import Control.Monad.Trans (lift)
 import Data.Binary.Get (runGetOrFail)
 import Data.ByteString.Lazy qualified as LBS
 import Data.IORef (readIORef, writeIORef, atomicModifyIORef')
+import Data.Foldable (foldlM)
 import Data.Map qualified as Map
 import Data.Map (Map, (\\))
 import Data.Maybe (isJust, mapMaybe, fromMaybe, fromJust)
@@ -28,12 +30,14 @@ import System.Random (mkStdGen)
 
 import EVM (bytecode, cheatCode)
 import EVM.ABI (getAbi, AbiType(AbiAddressType), AbiValue(AbiAddress))
+import EVM.Solidity (SolcContract)
 import EVM.Types hiding (Env, Frame(state))
 
 import Echidna.ABI
 import Echidna.Exec
 import Echidna.Mutator.Corpus
 import Echidna.Shrink (shrinkTest)
+import Echidna.Solidity (createSymTx)
 import Echidna.Symbolic (forceBuf, forceAddr)
 import Echidna.Test
 import Echidna.Transaction
@@ -70,6 +74,61 @@ replayCorpus vm txSeqs =
   forM_ (zip [1..] txSeqs) $ \(i, txSeq) -> do
     _ <- callseq vm txSeq
     pushEvent (TxSequenceReplayed i (length txSeqs))
+
+runSymWorker
+  :: (MonadIO m, MonadThrow m, MonadRandom m, MonadReader Env m)
+  => VM RealWorld -- ^ Initial VM state
+  -> Int     -- ^ Worker id starting from 0
+  -> [[Tx]]  -- ^ Initial corpus of transactions TODO unused
+  -> Maybe Text
+  -> [SolcContract]
+  -> (Env -> ((a, b, CampaignEvent) -> IO ()) -> Int -> MVar () -> IO ()) -- TODO
+  -> GenDict -- TODO
+  -> m (WorkerStopReason, WorkerState)
+runSymWorker vm0 workerId corpus0 name cs spawnListener genDict = flip runStateT initialState $ do -- TODO how to teardown at the end?
+  newCovEvent <- liftIO newEmptyMVar
+  listenerMVar <- liftIO newEmptyMVar -- TODO read at end
+  env <- ask
+
+  liftIO $ spawnListener env (listenerFunc newCovEvent) 1  listenerMVar
+  -- runSymexec [] -- TODO, use corpus0?
+  runLoop newCovEvent mempty
+  pure undefined
+  where
+
+  initialState =
+    WorkerState { workerId
+                , gasInfo = mempty
+                , genDict = genDict -- effectiveGenDict -- TODO
+                , newCoverage = False
+                , ncallseqs = 0
+                , ncalls = 0
+                }
+
+  listenerFunc newCovEvent (_, _, NewCoverage _ _ _) = void $ tryPutMVar newCovEvent ()
+  listenerFunc _ _ = pure ()
+
+  runLoop newCovEvent !alreadyLookedAt = do
+    liftIO $ takeMVar newCovEvent
+    (maybeTxn, alreadyLookedAt') <- chooseTxn newCovEvent alreadyLookedAt
+    maybe (pure ()) runSymexec maybeTxn
+    runLoop newCovEvent alreadyLookedAt'
+
+  chooseTxn newCovEvent alreadyLookedAt = do
+    corpusRef <- asks (.corpusRef)
+    corpus <- liftIO $ readIORef corpusRef
+    let
+      toSymexec = Set.difference corpus alreadyLookedAt
+      firstTxn = if null toSymexec then Nothing else Just (Set.elemAt 0 toSymexec)
+      alreadyLookedAt' = maybe alreadyLookedAt (flip Set.insert alreadyLookedAt) firstTxn
+    when (Set.size toSymexec > 1) $ void $ liftIO $ tryPutMVar newCovEvent ()
+    pure (snd <$> firstTxn, alreadyLookedAt')
+
+  runSymexec txns = do
+    env <- ask
+    vm <- foldlM (\vm txn -> snd <$> execTx vm txn) vm0 txns
+    symTxns <- liftIO $ createSymTx env name cs vm
+    mapM_ (\symTxn -> callseq vm0 $ txns <> [symTxn]) symTxns
 
 -- | Run a fuzzing campaign given an initial universe state, some tests, and an
 -- optional dictionary to generate calls with. Return the 'Campaign' state once

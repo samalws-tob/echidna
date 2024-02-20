@@ -47,15 +47,13 @@ prepareContract
   -> NonEmpty FilePath
   -> Maybe ContractName
   -> Seed
-  -> IO (VM RealWorld, World, GenDict, [Tx])
+  -> IO (VM RealWorld, World, GenDict)
 prepareContract env contracts solFiles specifiedContract seed = do
   let solConf = env.cfg.solConf
 
   -- compile and load contracts
   (vm, funs, testNames, signatureMap) <-
     loadSpecified env specifiedContract contracts
-
-  symTxs <- createSymTx env specifiedContract contracts vm
 
   -- run processors
   slitherInfo <- runSlither (NE.head solFiles) solConf
@@ -90,7 +88,7 @@ prepareContract env contracts solFiles specifiedContract seed = do
                      (returnTypes contracts)
 
   writeIORef env.testsRef echidnaTests
-  pure (vm, world, dict, symTxs)
+  pure (vm, world, dict)
 
 loadInitialCorpus :: Env -> World -> IO [[Tx]]
 loadInitialCorpus env world = do

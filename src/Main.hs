@@ -114,13 +114,13 @@ main = withUtf8 $ withCP65001 $ do
 
   -- take the seed from config, otherwise generate a new one
   seed <- maybe (getRandomR (0, maxBound)) pure cfg.campaignConf.seed
-  (vm, world, dict, symTxs) <-
+  (vm, world, dict) <-
     prepareContract env contracts cliFilePath cliSelectedContract seed
 
   initialCorpus <- loadInitialCorpus env world
-  let corpus = initialCorpus <> (pure <$> symTxs)
+  let corpus = initialCorpus
   -- start ui and run tests
-  _campaign <- runReaderT (ui vm world dict corpus) env
+  _campaign <- runReaderT (ui vm world dict corpus cliSelectedContract contracts) env
 
   contractsCache <- readIORef cacheContractsRef
   slotsCache <- readIORef cacheSlotsRef
