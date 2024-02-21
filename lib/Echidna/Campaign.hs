@@ -16,7 +16,7 @@ import Control.Monad.ST (RealWorld)
 import Control.Monad.Trans (lift)
 import Data.Binary.Get (runGetOrFail)
 import Data.ByteString.Lazy qualified as LBS
-import Data.IORef (readIORef, atomicModifyIORef')
+import Data.IORef (newIORef, readIORef, atomicModifyIORef')
 import Data.List qualified as List
 import Data.Foldable (foldlM)
 import Data.Map qualified as Map
@@ -94,16 +94,17 @@ runSymWorker
   -> m (WorkerStopReason, WorkerState)
 runSymWorker vm0 workerId name cs stopVar stoppedVar genDict = flip runStateT initialState $ flip evalRandT (mkStdGen {-effectiveSeed-}0) $ do -- TODO how to teardown at the end?
   newCovEvent <- liftIO newEmptyMVar
-  env <- ask
+  lookAtQueue <- liftIO $ newIORef ([] : cov0)
 
-  listenerMVar <- spawnListener $ listenerFunc newCovEvent
-  runSymexec [] -- TODO, use corpus0?
-  liftIO $ forkIO $ stopVarTriggersEvent newCovEvent
-  runLoop newCovEvent mempty
-  liftIO $ readMVar listenerMVar
-  liftIO $ tryPutMVar stoppedVar ()
+  listenerMVar <- spawnListener $ listenerFunc newCovEvent lookAtQueue
+  void $ liftIO $ forkIO $ stopVarTriggersEvent newCovEvent
+  runLoop newCovEvent lookAtQueue
+  liftIO $ takeMVar listenerMVar
+  void $ liftIO $ tryPutMVar stoppedVar ()
   pure undefined
   where
+
+  cov0 = [] -- TODO
 
   stopVarTriggersEvent newCovEvent = readMVar stopVar >> tryPutMVar newCovEvent () >> pure () -- TODO theres no mvar on stopping this one
 
@@ -116,36 +117,20 @@ runSymWorker vm0 workerId name cs stopVar stoppedVar genDict = flip runStateT in
                 , ncalls = 0
                 }
 
-  listenerFunc newCovEvent ev = do
-    putStrLn "GOT AN EVENT"
-    case ev of
-      (_, WorkerEvent _ (NewCoverage _ _ _ _)) -> void $ putStrLn "EVENT WAS GOOD" >> tryPutMVar newCovEvent ()
-      _ -> pure ()
-  -- listenerFunc newCovEvent (_, WorkerEvent _ (NewCoverage _ _ _ _)) = void $ tryPutMVar newCovEvent ()
-  -- listenerFunc _ _ = pure ()
+  listenerFunc newCovEvent lookAtQueue (_, WorkerEvent _ (NewCoverage _ _ _ txs)) = void $ atomicModifyIORef' lookAtQueue ((,()) . (txs:)) >> tryPutMVar newCovEvent ()
+  listenerFunc _ _ _ = pure ()
 
-  runLoop newCovEvent !alreadyLookedAt = do
-    liftIO $ putStrLn "runLoop point A"
-    liftIO $ takeMVar newCovEvent
-    liftIO $ putStrLn "runLoop point B"
+  popListFn [] = ([], Nothing)
+  popListFn (a:b) = (b, Just a)
+
+  runLoop newCovEvent lookAtQueue = do
+    void $ liftIO $ tryTakeMVar newCovEvent
     canContinue <- liftIO $ isEmptyMVar stopVar
     when canContinue $ do
-      liftIO $ putStrLn "runLoop point C"
-      (maybeTxn, alreadyLookedAt') <- chooseTxn newCovEvent alreadyLookedAt
-      liftIO $ putStrLn "runLoop point D"
-      maybe (pure ()) runSymexec maybeTxn
-      liftIO $ putStrLn "runLoop point E"
-      runLoop newCovEvent alreadyLookedAt'
-
-  chooseTxn newCovEvent alreadyLookedAt = do
-    corpusRef <- asks (.corpusRef)
-    corpus <- liftIO $ readIORef corpusRef
-    let
-      toSymexec = Set.difference corpus alreadyLookedAt
-      firstTxn = if null toSymexec then Nothing else Just (Set.elemAt 0 toSymexec)
-      alreadyLookedAt' = maybe alreadyLookedAt (flip Set.insert alreadyLookedAt) firstTxn
-    when (Set.size toSymexec > 1) $ void $ liftIO $ tryPutMVar newCovEvent ()
-    pure (snd <$> firstTxn, alreadyLookedAt')
+      liftIO (atomicModifyIORef' lookAtQueue popListFn) >>= \case
+        Nothing -> liftIO (takeMVar newCovEvent)
+        Just txs -> runSymexec txs
+      runLoop newCovEvent lookAtQueue
 
   runSymexec txns = do
     env <- ask
