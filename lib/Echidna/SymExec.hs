@@ -33,7 +33,7 @@ import Data.Vector.Unboxed.Mutable qualified as VUnboxed.Mutable
 exploreContract :: Addr -> SolcContract -> VM RealWorld -> IO [Tx]
 exploreContract dst contract vm = do
   let methods = Map.elems contract.abiMap
-      timeout = Just 30 -- seconds
+      timeout = Just 2 -- seconds
 
   res <- withSolvers Z3 2 timeout $ \solvers -> do
     forM methods $ \method -> do

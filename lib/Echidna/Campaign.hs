@@ -86,15 +86,16 @@ runSymWorker
   :: (MonadIO m, MonadThrow m, MonadReader Env m)
   => VM RealWorld -- ^ Initial VM state
   -> Int     -- ^ Worker id starting from 0
+  -> [(FilePath, [Tx])]
   -> Maybe Text
   -> [SolcContract]
   -> MVar () -- stopVar
   -> MVar () -- stoppedVar
   -> GenDict -- TODO
   -> m (WorkerStopReason, WorkerState)
-runSymWorker vm0 workerId name cs stopVar stoppedVar genDict = flip runStateT initialState $ flip evalRandT (mkStdGen {-effectiveSeed-}0) $ do -- TODO how to teardown at the end?
+runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = flip runStateT initialState $ flip evalRandT (mkStdGen {-effectiveSeed-}0) $ do
   newCovEvent <- liftIO newEmptyMVar
-  lookAtQueue <- liftIO $ newIORef ([] : cov0)
+  lookAtQueue <- liftIO $ newIORef ([] : (map snd corpus0))
 
   listenerMVar <- spawnListener $ listenerFunc newCovEvent lookAtQueue
   void $ liftIO $ forkIO $ stopVarTriggersEvent newCovEvent
@@ -103,8 +104,6 @@ runSymWorker vm0 workerId name cs stopVar stoppedVar genDict = flip runStateT in
   void $ liftIO $ tryPutMVar stoppedVar ()
   pure undefined
   where
-
-  cov0 = [] -- TODO
 
   stopVarTriggersEvent newCovEvent = readMVar stopVar >> tryPutMVar newCovEvent () >> pure () -- TODO theres no mvar on stopping this one
 

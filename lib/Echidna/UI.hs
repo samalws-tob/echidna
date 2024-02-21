@@ -260,7 +260,7 @@ ui vm world dict initialCorpus name cs = do
           let timeoutUsecs = maybe (-1) (*1_000_000) env.cfg.uiConf.maxTime
           maybeResult <- timeout timeoutUsecs $
             runSymWorker
-                      vm workerId name cs stopVar stoppedVar dict
+                      vm workerId initialCorpus name cs stopVar stoppedVar dict
           pure $ case maybeResult of
             Just (stopReason, _finalState) -> stopReason
             Nothing -> TimeLimitReached
