@@ -4,7 +4,7 @@
 module Echidna.Campaign where
 
 import Control.Concurrent
-import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar)
+import Control.Concurrent.MVar (MVar, newEmptyMVar, takeMVar, tryPutMVar, readMVar, isEmptyMVar)
 import Control.DeepSeq (force)
 import Control.Monad (replicateM, when, void, forM_)
 import Control.Monad.Catch (MonadThrow(..))
@@ -88,17 +88,24 @@ runSymWorker
   -> Int     -- ^ Worker id starting from 0
   -> Maybe Text
   -> [SolcContract]
+  -> MVar () -- stopVar
+  -> MVar () -- stoppedVar
   -> GenDict -- TODO
   -> m (WorkerStopReason, WorkerState)
-runSymWorker vm0 workerId name cs genDict = flip runStateT initialState $ flip evalRandT (mkStdGen {-effectiveSeed-}0) $ do -- TODO how to teardown at the end?
+runSymWorker vm0 workerId name cs stopVar stoppedVar genDict = flip runStateT initialState $ flip evalRandT (mkStdGen {-effectiveSeed-}0) $ do -- TODO how to teardown at the end?
   newCovEvent <- liftIO newEmptyMVar
   env <- ask
 
   listenerMVar <- spawnListener $ listenerFunc newCovEvent
-  -- runSymexec [] -- TODO, use corpus0?
+  runSymexec [] -- TODO, use corpus0?
+  liftIO $ forkIO $ stopVarTriggersEvent newCovEvent
   runLoop newCovEvent mempty
+  liftIO $ readMVar listenerMVar
+  liftIO $ tryPutMVar stoppedVar ()
   pure undefined
   where
+
+  stopVarTriggersEvent newCovEvent = readMVar stopVar >> tryPutMVar newCovEvent () >> pure () -- TODO theres no mvar on stopping this one
 
   initialState =
     WorkerState { workerId
@@ -109,14 +116,26 @@ runSymWorker vm0 workerId name cs genDict = flip runStateT initialState $ flip e
                 , ncalls = 0
                 }
 
-  listenerFunc newCovEvent (_, WorkerEvent _ (NewCoverage _ _ _ _)) = void $ tryPutMVar newCovEvent ()
-  listenerFunc _ _ = pure ()
+  listenerFunc newCovEvent ev = do
+    putStrLn "GOT AN EVENT"
+    case ev of
+      (_, WorkerEvent _ (NewCoverage _ _ _ _)) -> void $ putStrLn "EVENT WAS GOOD" >> tryPutMVar newCovEvent ()
+      _ -> pure ()
+  -- listenerFunc newCovEvent (_, WorkerEvent _ (NewCoverage _ _ _ _)) = void $ tryPutMVar newCovEvent ()
+  -- listenerFunc _ _ = pure ()
 
   runLoop newCovEvent !alreadyLookedAt = do
+    liftIO $ putStrLn "runLoop point A"
     liftIO $ takeMVar newCovEvent
-    (maybeTxn, alreadyLookedAt') <- chooseTxn newCovEvent alreadyLookedAt
-    maybe (pure ()) runSymexec maybeTxn
-    runLoop newCovEvent alreadyLookedAt'
+    liftIO $ putStrLn "runLoop point B"
+    canContinue <- liftIO $ isEmptyMVar stopVar
+    when canContinue $ do
+      liftIO $ putStrLn "runLoop point C"
+      (maybeTxn, alreadyLookedAt') <- chooseTxn newCovEvent alreadyLookedAt
+      liftIO $ putStrLn "runLoop point D"
+      maybe (pure ()) runSymexec maybeTxn
+      liftIO $ putStrLn "runLoop point E"
+      runLoop newCovEvent alreadyLookedAt'
 
   chooseTxn newCovEvent alreadyLookedAt = do
     corpusRef <- asks (.corpusRef)

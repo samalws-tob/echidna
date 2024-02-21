@@ -63,7 +63,7 @@ exploreContract dst contract vm = do
       -- print $ vm'.state
       exprInter <- interpret (Fetch.oracle solvers rpcInfo) maxIter askSmtIters Naive vm' runExpr
       models <- produceModels solvers (simplify exprInter)
-      print (mapMaybe (modelToTx dst method) models)
+      -- print (mapMaybe (modelToTx dst method) models)
       pure $ mapMaybe (modelToTx dst method) models
 
   pure $ mconcat res

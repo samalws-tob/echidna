@@ -90,10 +90,14 @@ ui vm world dict initialCorpus name cs = do
 
   corpusSaverStopVar <- spawnListener (saveCorpusEvent env)
 
+  symStopVar <- newEmptyMVar
+  symStoppedVar <- newEmptyMVar
+
+  spawnSymWorker env perWorkerTestLimit 0 symStopVar symStoppedVar
+  -- putMVar symStoppedVar ()
+
   workers <- forM (zip corpusChunks [0..(nworkers-1)]) $
     uncurry (spawnWorker env perWorkerTestLimit)
-
-  spawnSymWorker env perWorkerTestLimit 0
 
   case effectiveMode of
 #ifdef INTERACTIVE_UI
@@ -152,6 +156,10 @@ ui vm world dict initialCorpus name cs = do
       -- wait for all events to be processed
       forM_ [uiEventsForwarderStopVar, corpusSaverStopVar] takeMVar
 
+      -- TODO should be before takeMVar listenerStopVar
+      tryPutMVar symStopVar ()
+      takeMVar symStoppedVar
+
       liftIO $ killThread ticker
 
       states <- workerStates workers
@@ -192,6 +200,10 @@ ui vm world dict initialCorpus name cs = do
 
       -- wait for all events to be processed
       forM_ [uiEventsForwarderStopVar, corpusSaverStopVar] takeMVar
+
+      -- TODO should be before takeMVar listenerStopVar
+      tryPutMVar symStopVar ()
+      takeMVar symStoppedVar
 
       liftIO $ killThread ticker
 
@@ -239,7 +251,7 @@ ui vm world dict initialCorpus name cs = do
 
     pure (threadId, stateRef)
 
-  spawnSymWorker env testLimit workerId = do
+  spawnSymWorker env testLimit workerId stopVar stoppedVar = do
     stateRef <- newIORef initialWorkerState
 
     threadId <- forkIO $ do
@@ -248,7 +260,7 @@ ui vm world dict initialCorpus name cs = do
           let timeoutUsecs = maybe (-1) (*1_000_000) env.cfg.uiConf.maxTime
           maybeResult <- timeout timeoutUsecs $
             runSymWorker
-                      vm workerId name cs dict
+                      vm workerId name cs stopVar stoppedVar dict
           pure $ case maybeResult of
             Just (stopReason, _finalState) -> stopReason
             Nothing -> TimeLimitReached
