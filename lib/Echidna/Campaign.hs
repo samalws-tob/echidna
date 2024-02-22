@@ -99,8 +99,9 @@ runSymWorker
 runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = do
   newCovEvent <- liftIO newEmptyMVar
   lookAtQueue :: IORef [([Tx], Maybe CampaignEvent)] <- liftIO $ newIORef (([], Nothing) : (map ((, Nothing) . snd) corpus0))
+  numWorkersLeft <- liftIO . newIORef =<< asks (fromIntegral . fromMaybe 1 . (.cfg.campaignConf.workers))
 
-  listenerMVar <- spawnListener $ listenerFunc newCovEvent lookAtQueue
+  listenerMVar <- spawnListener $ listenerFunc newCovEvent lookAtQueue numWorkersLeft stopVar
   void $ liftIO $ forkIO $ stopVarTriggersEvent newCovEvent
   runLoop newCovEvent lookAtQueue
   liftIO $ takeMVar listenerMVar
@@ -110,8 +111,11 @@ runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = do
 
   stopVarTriggersEvent newCovEvent = readMVar stopVar >> tryPutMVar newCovEvent () >> pure () -- TODO theres no mvar on stopping this one
 
-  listenerFunc newCovEvent lookAtQueue (_, event@(WorkerEvent _ (NewCoverage _ _ _ txs))) = void $ atomicModifyIORef' lookAtQueue ((,()) . ((txs, Just event):)) >> tryPutMVar newCovEvent ()
-  listenerFunc _ _ _ = pure ()
+  listenerFunc newCovEvent lookAtQueue _ _ (_, event@(WorkerEvent _ (NewCoverage _ _ _ txs))) = void $ atomicModifyIORef' lookAtQueue ((,()) . ((txs, Just event):)) >> tryPutMVar newCovEvent ()
+  listenerFunc newCovEvent _ numWorkersLeft stopVar (_, event@(WorkerEvent _ (WorkerStopped _))) = do
+    numLeft <- atomicModifyIORef' numWorkersLeft (\n -> (n-1, n-1))
+    when (numLeft == 0) $ void $ tryPutMVar stopVar ()
+  listenerFunc _ _ _ _ _ = pure ()
 
   runLoop newCovEvent lookAtQueue = do
     void $ liftIO $ tryTakeMVar newCovEvent
