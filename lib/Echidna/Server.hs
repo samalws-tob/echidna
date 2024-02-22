@@ -43,6 +43,7 @@ runSSEServer serverStopVar env port nworkers = do
                     TestFalsified _ -> "test_falsified"
                     TestOptimized _ -> "test_optimized"
                     NewCoverage {} -> "new_coverage"
+                    SymExecCompleted _ _ -> "sym_exec_completed"
                     TxSequenceReplayed {} -> "tx_sequence_replayed"
                     TxSequenceReplayFailed {} -> "tx_sequence_replay_failed"
                     WorkerStopped _ -> "worker_stopped"

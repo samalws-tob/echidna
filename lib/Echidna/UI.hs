@@ -251,7 +251,7 @@ ui vm world dict initialCorpus name cs = do
 
     pure (threadId, stateRef)
 
-  spawnSymWorker env testLimit workerId stopVar stoppedVar = do
+  spawnSymWorker env testLimit workerId stopVar stoppedVar = do -- TODO
     stateRef <- newIORef initialWorkerState
 
     threadId <- forkIO $ do

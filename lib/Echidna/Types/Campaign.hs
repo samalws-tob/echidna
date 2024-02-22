@@ -1,6 +1,7 @@
 module Echidna.Types.Campaign where
 
 import Data.Aeson
+import Data.IORef (IORef)
 import Data.Map (Map)
 import Data.Text (Text)
 import Data.Text qualified as T
@@ -49,11 +50,13 @@ type WorkerId = Int
 data CampaignEvent
   = WorkerEvent WorkerId WorkerEvent
   | Failure String
+  deriving Show
 
 data WorkerEvent
   = TestFalsified !EchidnaTest
   | TestOptimized !EchidnaTest
   | NewCoverage { points :: !Int, numCodehashes :: !Int, corpusSize :: !Int, transactions :: [Tx] }
+  | SymExecCompleted [Tx] (Maybe CampaignEvent)
   | TxSequenceReplayed FilePath !Int !Int
   | TxSequenceReplayFailed FilePath Tx
   | WorkerStopped WorkerStopReason
@@ -66,7 +69,9 @@ instance ToJSON WorkerEvent where
     TestFalsified test -> toJSON test
     TestOptimized test -> toJSON test
     NewCoverage { points, numCodehashes, corpusSize } ->
-      object [ "coverage" .= points, "contracts" .= numCodehashes, "corpus_size" .= corpusSize]
+      object [ "coverage" .= points, "contracts" .= numCodehashes, "corpus_size" .= corpusSize] -- TODO why do we not have txs here?
+    SymExecCompleted _ _ -> -- TODO
+      object []
     TxSequenceReplayed file current total ->
       object [ "file" .= file, "current" .= current, "total" .= total ]
     TxSequenceReplayFailed file tx ->
@@ -97,6 +102,8 @@ ppWorkerEvent = \case
     "New coverage: " <> show points <> " instr, "
       <> show numCodehashes <> " contracts, "
       <> show corpusSize <> " seqs in corpus"
+  SymExecCompleted _ _ ->
+    "Symbolic execution completed" -- TODO
   TxSequenceReplayed file current total ->
     "Sequence replayed from corpus file " <> file <> " (" <> show current <> "/" <> show total <> ")"
   TxSequenceReplayFailed file tx ->
@@ -136,6 +143,7 @@ data WorkerState = WorkerState
     -- ^ Number of times the callseq is called
   , ncalls      :: !Int
     -- ^ Number of calls executed while fuzzing
+  , symTxsQueueRef :: IORef [[Tx]]
   }
 
 initialWorkerState :: WorkerState
@@ -146,6 +154,7 @@ initialWorkerState =
               , newCoverage = False
               , ncallseqs = 0
               , ncalls = 0
+              , symTxsQueueRef = undefined -- TODO
               }
 
 defaultTestLimit :: Int

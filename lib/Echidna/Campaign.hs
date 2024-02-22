@@ -16,12 +16,12 @@ import Control.Monad.ST (RealWorld)
 import Control.Monad.Trans (lift)
 import Data.Binary.Get (runGetOrFail)
 import Data.ByteString.Lazy qualified as LBS
-import Data.IORef (newIORef, readIORef, atomicModifyIORef')
+import Data.IORef (IORef, newIORef, readIORef, atomicModifyIORef')
 import Data.List qualified as List
 import Data.Foldable (foldlM)
 import Data.Map qualified as Map
 import Data.Map (Map, (\\))
-import Data.Maybe (isJust, mapMaybe, fromMaybe)
+import Data.Maybe (isJust, fromJust, mapMaybe, fromMaybe)
 import Data.Set (Set)
 import Data.Set qualified as Set
 import Data.Text (Text)
@@ -82,6 +82,9 @@ replayCorpus vm txSeqs =
       Just faultyTx ->
         pushWorkerEvent (TxSequenceReplayFailed file faultyTx)
 
+popListFn [] = ([], Nothing)
+popListFn (a:b) = (b, Just a)
+
 runSymWorker
   :: (MonadIO m, MonadThrow m, MonadReader Env m)
   => VM RealWorld -- ^ Initial VM state
@@ -93,9 +96,9 @@ runSymWorker
   -> MVar () -- stoppedVar
   -> GenDict -- TODO
   -> m (WorkerStopReason, WorkerState)
-runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = flip runStateT initialState $ flip evalRandT (mkStdGen {-effectiveSeed-}0) $ do
+runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = do
   newCovEvent <- liftIO newEmptyMVar
-  lookAtQueue <- liftIO $ newIORef ([] : (map snd corpus0))
+  lookAtQueue :: IORef [([Tx], Maybe CampaignEvent)] <- liftIO $ newIORef (([], Nothing) : (map ((, Nothing) . snd) corpus0))
 
   listenerMVar <- spawnListener $ listenerFunc newCovEvent lookAtQueue
   void $ liftIO $ forkIO $ stopVarTriggersEvent newCovEvent
@@ -107,20 +110,8 @@ runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = flip runS
 
   stopVarTriggersEvent newCovEvent = readMVar stopVar >> tryPutMVar newCovEvent () >> pure () -- TODO theres no mvar on stopping this one
 
-  initialState =
-    WorkerState { workerId
-                , gasInfo = mempty
-                , genDict = genDict -- effectiveGenDict -- TODO
-                , newCoverage = False
-                , ncallseqs = 0
-                , ncalls = 0
-                }
-
-  listenerFunc newCovEvent lookAtQueue (_, WorkerEvent _ (NewCoverage _ _ _ txs)) = void $ atomicModifyIORef' lookAtQueue ((,()) . (txs:)) >> tryPutMVar newCovEvent ()
+  listenerFunc newCovEvent lookAtQueue (_, event@(WorkerEvent _ (NewCoverage _ _ _ txs))) = void $ atomicModifyIORef' lookAtQueue ((,()) . ((txs, Just event):)) >> tryPutMVar newCovEvent ()
   listenerFunc _ _ _ = pure ()
-
-  popListFn [] = ([], Nothing)
-  popListFn (a:b) = (b, Just a)
 
   runLoop newCovEvent lookAtQueue = do
     void $ liftIO $ tryTakeMVar newCovEvent
@@ -128,14 +119,14 @@ runSymWorker vm0 workerId corpus0 name cs stopVar stoppedVar genDict = flip runS
     when canContinue $ do
       liftIO (atomicModifyIORef' lookAtQueue popListFn) >>= \case
         Nothing -> liftIO (takeMVar newCovEvent)
-        Just txs -> runSymexec txs
+        Just queueEntry -> runSymexec queueEntry
       runLoop newCovEvent lookAtQueue
 
-  runSymexec txns = do
+  runSymexec (txns, inResponseTo) = do
     env <- ask
     vm <- foldlM (\vm txn -> snd <$> execTx vm txn) vm0 txns
     symTxns <- liftIO $ createSymTx env name cs vm
-    mapM_ (\symTxn -> callseq vm0 $ txns <> [symTxn]) symTxns
+    liftIO $ pushCampaignEvent env (WorkerEvent workerId (SymExecCompleted (txns ++ symTxns) inResponseTo))
 
 -- | Run a fuzzing campaign given an initial universe state, some tests, and an
 -- optional dictionary to generate calls with. Return the 'Campaign' state once
@@ -153,11 +144,16 @@ runWorker
   -> Int     -- ^ Test limit for this worker
   -> m (WorkerStopReason, WorkerState)
 runWorker callback vm world dict workerId initialCorpus testLimit = do
+  symTxsQueueRef <- liftIO $ newIORef mempty
+  listenerMVar <- spawnListener $ listenerFunc symTxsQueueRef
+  -- TODO eventually have to cleanup listenerMVar
+
   let
     effectiveSeed = dict.defSeed + workerId
     effectiveGenDict = dict { defSeed = effectiveSeed }
     initialState =
       WorkerState { workerId
+                  , symTxsQueueRef
                   , gasInfo = mempty
                   , genDict = effectiveGenDict
                   , newCoverage = False
@@ -172,11 +168,17 @@ runWorker callback vm world dict workerId initialCorpus testLimit = do
       run
 
   where
+  listenerFunc symTxsQueueRef (_, WorkerEvent _ (SymExecCompleted txs ev0)) = case ev0 of
+    Just (WorkerEvent wid _) | wid /= workerId -> pure ()
+    _ -> atomicModifyIORef' symTxsQueueRef ((,()) . (txs:))
+  listenerFunc _ _ = pure ()
+
   run = do
     testsRef <- asks (.testsRef)
     tests <- liftIO $ readIORef testsRef
     CampaignConf{stopOnFail, shrinkLimit} <- asks (.cfg.campaignConf)
     ncalls <- gets (.ncalls)
+    symTxs <- liftIO . flip atomicModifyIORef' popListFn =<< gets (.symTxsQueueRef)
 
     let
       final test = case test.state of
@@ -194,6 +196,9 @@ runWorker callback vm world dict workerId initialCorpus testLimit = do
 
     if | stopOnFail && any final tests ->
          lift callback >> pure FastFailed
+
+       | isJust symTxs && ncalls < testLimit ->
+         callseq vm (fromJust symTxs) >> continue
 
        | (null tests || any isOpen tests) && ncalls < testLimit ->
          fuzz >> continue
