@@ -15,12 +15,9 @@ ghc-options:
   - -fexpose-all-unfoldings
 
 dependencies:
-  - witch
-  - operational
-  - async
-  - unliftio-core
   - base
   - aeson
+  - async
   - base16-bytestring
   - binary
   - bytestring

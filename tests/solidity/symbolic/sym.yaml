@@ -1,6 +1,3 @@
 symExec: true
-workers: 1 # 0
-# testLimit: 99999999999999999
-symExecMaxIters: 999999
-symExecAskSMTIters: 0
-seqLen: 5
+workers: 0
+symExecConcolic: false

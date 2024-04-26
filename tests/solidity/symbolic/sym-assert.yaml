@@ -1,7 +1,4 @@
 testMode: assertion
 symExec: true
-workers: 1 # 0
-symExecMaxIters: 999999
-symExecAskSMTIters: 0
-seqLen: 5
-
+symExecConcolic: false
+workers: 0
