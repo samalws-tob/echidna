@@ -19,19 +19,19 @@ import Tests.Symbolic (symbolicTests)
 main :: IO ()
 main = withCurrentDirectory "./tests/solidity" . defaultMain $
          testGroup "Echidna"
-           [ --configTests
-           --, compilationTests
-           --, seedTests
-           --, integrationTests
-           --, valuesTests
-           --, coverageTests
-           --, abiv2Tests
-           --, assertionTests
-           --, overflowTests
-           --, optimizationTests
-           --, researchTests
-           --, dapptestTests
-           --, encodingJSONTests
-           --, cheatTests
-           {-,-} symbolicTests
+           [ configTests
+           , compilationTests
+           , seedTests
+           , integrationTests
+           , valuesTests
+           , coverageTests
+           , abiv2Tests
+           , assertionTests
+           , overflowTests
+           , optimizationTests
+           , researchTests
+           , dapptestTests
+           , encodingJSONTests
+           , cheatTests
+           , symbolicTests
            ]

@@ -28,7 +28,7 @@ import Data.Time (LocalTime)
 import System.Random (mkStdGen)
 
 import EVM (cheatCode)
-import EVM.ABI (getAbi, AbiType(AbiAddressType), AbiValue(AbiAddress, AbiUInt))
+import EVM.ABI (getAbi, AbiType(AbiAddressType), AbiValue(AbiAddress))
 import EVM.Solidity (SolcContract)
 import EVM.Types hiding (Env, Frame(state), Gas)
 
@@ -148,15 +148,27 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
     symexecTxs transactions
   listenerFunc _ = pure ()
 
-  symexecTxs txs = mapM_ symexecTx =<< txsToTxAndVms txs vm []
+  symexecTxs txs = mapM_ symexecTx =<< txsToTxAndVms txs
 
-  txsToTxAndVms [] _ _ = pure []
-  txsToTxAndVms (h:t) vm' txsBase = do
+  txsToTxAndVms txs = do
+    isConc <- asks (.cfg.campaignConf.symExecConcolic)
+    if isConc
+      then txsToTxAndVmsConc txs vm []
+      else txsToTxAndVmsSym txs
+
+  txsToTxAndVmsConc [] _ _ = pure []
+  txsToTxAndVmsConc (h:t) vm' txsBase = do
     (_, vm'') <- execTx vm' h
-    rest <- txsToTxAndVms t vm'' (txsBase <> [h])
-    pure ((h,vm',txsBase):rest)
+    rest <- txsToTxAndVmsConc t vm'' (txsBase <> [h])
+    pure $ case h of
+             (Tx { call = SolCall tx }) -> ((Just tx,vm',txsBase):rest)
+             _ -> rest
 
-  symexecTx ((Tx {call = SolCall tx}), vm', txsBase) = do
+  txsToTxAndVmsSym txs = do
+    vm' <- foldlM (\vm' tx -> snd <$> execTx vm' tx) vm txs
+    pure [(Nothing,vm',txs)]
+
+  symexecTx (tx, vm', txsBase) = do
     cfg <- asks (.cfg)
     (threadId, symTxsChan) <- liftIO $ createSymTx cfg name cs tx vm'
 
@@ -171,8 +183,6 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
     newCoverage <- or <$> mapM (\symTx -> snd <$> callseq vm (txsBase <> [symTx])) symTxs
 
     unless newCoverage (pushWorkerEvent SymNoNewCoverage)
-
-  symexecTx _ = pure ()
 
 -- | Run a fuzzing campaign given an initial universe state, some tests, and an
 -- optional dictionary to generate calls with. Return the 'Campaign' state once

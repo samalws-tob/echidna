@@ -1,4 +1,5 @@
--- {#- OPTIONS_GHC -Wno-gadt-mono-local-binds #-}
+{-# LANGUAGE PartialTypeSignatures #-}
+{-# OPTIONS_GHC -Wno-gadt-mono-local-binds #-}
 
 module Echidna.SymExec (createSymTx) where
 
@@ -14,7 +15,7 @@ import Data.Function ((&))
 import Data.Functor ((<&>))
 import Data.List (singleton)
 import Data.Map qualified as Map
-import Data.Maybe (fromMaybe, mapMaybe, isNothing, listToMaybe, fromJust)
+import Data.Maybe (fromMaybe, mapMaybe, isJust)
 import Data.Text (Text)
 import Data.Text qualified as T
 import Data.Vector (toList)
@@ -26,15 +27,15 @@ import Echidna.Types.Config (EConfig(..))
 import Echidna.Types.Solidity (SolConf(..))
 import Echidna.Types.Signature (SolCall)
 import EVM.ABI (AbiValue(..), Sig(..), decodeAbiValue)
-import EVM.Expr (simplify, simplifyProp)
+import EVM.Expr (simplify)
 import EVM.Fetch qualified as Fetch
 import EVM.SMT (SMTCex(..), SMT2, assertProps)
 import EVM (loadContract, resetState)
 import EVM.Effects (defaultEnv, defaultConfig)
 import EVM.Solidity (SolcContract(..), Method(..))
 import EVM.Solvers (withSolvers, Solver(Z3), CheckSatResult(Sat), SolverGroup, checkSat)
-import EVM.SymExec (interpret, runExpr, abstractVM, mkCalldata, produceModels, LoopHeuristic (Naive), flattenExpr, extractProps)
-import EVM.Types (Addr, VM(..), Frame(..), FrameState(..), VMType(..), Env(..), Expr(..), EType(..), BaseState(..), EvmError(..), Query(..), Prop(..), BranchCondition(..), W256, word256Bytes, (./=), word)
+import EVM.SymExec (interpret, runExpr, abstractVM, mkCalldata, LoopHeuristic (Naive), flattenExpr, extractProps)
+import EVM.Types (Addr, VM(..), Frame(..), FrameState(..), VMType(..), Env(..), Expr(..), EType(..), BaseState(..), Query(..), Prop(..), BranchCondition(..), W256, word256Bytes, word)
 import EVM.Traversals (mapExpr)
 import Control.Monad.ST (stToIO, RealWorld)
 import Control.Monad.State.Strict (execState, runStateT)
@@ -45,61 +46,62 @@ import Echidna.Types.Tx (Tx(..), TxCall(..), maxGasPerBlock)
 -- Spawns a new thread; returns its thread ID as the first return value.
 -- The second return value is an MVar which is populated with transactions
 --   once the symbolic execution is finished.
-createSymTx :: EConfig -> Maybe Text -> [SolcContract] -> SolCall -> VM Concrete RealWorld -> IO (ThreadId, MVar [Tx])
+createSymTx :: EConfig -> Maybe Text -> [SolcContract] -> Maybe SolCall -> VM Concrete RealWorld -> IO (ThreadId, MVar [Tx])
 createSymTx cfg name cs call vm = do
   mainContract <- chooseContract cs name
   exploreContract cfg mainContract call vm
 
-exploreContract :: EConfig -> SolcContract -> SolCall -> VM Concrete RealWorld -> IO (ThreadId, MVar [Tx])
+exploreContract :: EConfig -> SolcContract -> Maybe SolCall -> VM Concrete RealWorld -> IO (ThreadId, MVar [Tx])
 exploreContract conf contract call vm = do
-  let methods = Map.elems contract.abiMap
-      method_ = listToMaybe $ filter (\method -> method.name == fst call) methods
-      method = fromJust method_ -- only evaluated after checking for isNothing
-      timeout = Just (fromIntegral conf.campaignConf.symExecTimeout)
+  let
+    isConc = isJust call
+    allMethods = Map.elems contract.abiMap
+    concMethods callJust = filter (\method -> method.name == fst callJust) methods
+    methods = maybe allMethods concMethods call
+    timeout = Just (fromIntegral conf.campaignConf.symExecTimeout)
+    maxIters = if isConc then Nothing else Just conf.campaignConf.symExecMaxIters
+    askSmtIters = if isConc then 0 else conf.campaignConf.symExecAskSMTIters
+    rpcInfo = Nothing
 
   threadIdChan <- newEmptyMVar
   doneChan <- newEmptyMVar
   resultChan <- newEmptyMVar
 
-  if isNothing method_ then pure () else
-    flip runReaderT defaultEnv $ withSolvers Z3 (fromIntegral conf.campaignConf.symExecNSolvers) timeout $ \solvers -> do
-      threadId <- liftIO $ forkIO $ flip runReaderT defaultEnv $ do
+  flip runReaderT defaultEnv $ withSolvers Z3 (fromIntegral conf.campaignConf.symExecNSolvers) timeout $ \solvers -> do
+    threadId <- liftIO $ forkIO $ flip runReaderT defaultEnv $ do
+      res <- forM methods $ \method -> do
         let
+          fetcher = concOrSymFetcher call solvers rpcInfo
           dst = conf.solConf.contractAddr
           calldata@(cd, constraints) = mkCalldata (Just (Sig method.methodSignature (snd <$> method.inputs))) []
           vmSym = abstractVM calldata contract.runtimeCode Nothing False
-          maxIters = Just conf.campaignConf.symExecMaxIters
-          askSmtIters = conf.campaignConf.symExecAskSMTIters
-          rpcInfo = Nothing
         vmSym' <- liftIO $ stToIO vmSym
         vmReset <- liftIO $ snd <$> runStateT (fromEVM resetState) vm
         let vm' = vmReset & execState (loadContract (LitAddr dst))
                           & vmMakeSymbolic
-                          & #frames .~ []
                           & #constraints .~ constraints
-                          & #state % #callvalue .~ TxValue
+                          & #state % #callvalue .~ TxValue -- TODO
                           -- & #state % #caller .~ SymAddr "caller"
                           & #state % #calldata .~ cd
-                          & #state % #pc .~ 0
-                          & #state % #stack .~ []
-                          & #config % #baseState .~ AbstractBase
+                          -- & #config % #baseState .~ AbstractBase
                           & #env % #contracts .~ (Map.union vmSym'.env.contracts vm.env.contracts)
-        exprInter <- interpret (myFetcher solvers rpcInfo (genSubsts call)) maxIters askSmtIters Naive vm' runExpr
-        res <- liftIO $ mapConcurrently (checkSat solvers) $ manipulateExprInter exprInter
-        let ress = mapMaybe (modelToTx dst method) res
-
-        liftIO $ putMVar resultChan ress
-        liftIO $ putMVar doneChan ()
-      liftIO $ putMVar threadIdChan threadId
-      liftIO $ takeMVar doneChan
+        exprInter <- interpret fetcher maxIters askSmtIters Naive vm' runExpr
+        models <- liftIO $ mapConcurrently (checkSat solvers) $ manipulateExprInter isConc exprInter
+        pure $ mapMaybe (modelToTx dst method) models
+      liftIO $ putMVar resultChan $ concat res
+      liftIO $ putMVar doneChan ()
+    liftIO $ putMVar threadIdChan threadId
+    liftIO $ takeMVar doneChan
 
   threadId <- takeMVar threadIdChan
   pure (threadId, resultChan)
 
-manipulateExprInter :: Expr End -> [SMT2]
-manipulateExprInter = map (assertProps defaultConfig . singleton) . concatMap (go (PBool True) . extractProps) . map simplify . flattenExpr . simplify where
+manipulateExprInter :: Bool -> Expr End -> [SMT2]
+manipulateExprInter isConc = map (assertProps defaultConfig) . middleStep . map (extractProps . simplify) . flattenExpr . simplify where
+  middleStep = if isConc then middleStepConc else id
+  middleStepConc = map singleton . concatMap (go (PBool True))
   go :: Prop -> [Prop] -> [Prop]
-  go acc [] = []
+  go _ [] = []
   go acc (h:t) = (PNeg h `PAnd` acc):(go (h `PAnd` acc) t)
 
 -- | Sets result to Nothing, and sets gas to ()
@@ -173,13 +175,13 @@ modelToTx dst method result =
 type Substs = ([(Text, W256)], [(Text, Addr)])
 
 genSubsts :: SolCall -> Substs
-genSubsts (_, abiVals) = fold $ zipWith genVal abiVals (T.pack . ("arg"<>) . show <$> [1..]) where
+genSubsts (_, abiVals) = fold $ zipWith genVal abiVals (T.pack . ("arg" <>) . show <$> ([1..] :: [Int])) where
   genVal (AbiUInt _ i) name = ([(name, fromIntegral i)], [])
   genVal (AbiInt _ i) name = ([(name, fromIntegral i)], [])
   genVal (AbiBool b) name = ([(name, if b then 1 else 0)], [])
   genVal (AbiAddress addr) name = ([], [(name, addr)])
   genVal (AbiBytes n b) name | n > 0 && n <= 32 = ([(name, word b)], [])
-  genVal (AbiArray _ _ vals) name = fold $ zipWith genVal (toList vals) [name <> T.pack (show n) | n <- [0..]]
+  genVal (AbiArray _ _ vals) name = fold $ zipWith genVal (toList vals) [name <> T.pack (show n) | n <- [0..] :: [Int]]
   genVal _ _ = error "TODO: not yet implemented"
 
 substExpr :: Substs -> Expr a -> Expr a
@@ -188,9 +190,13 @@ substExpr (sw, sa) = mapExpr go where
   go v@(SymAddr t) = maybe v LitAddr (lookup t sa)
   go e = e
 
-myFetcher :: SolverGroup -> Fetch.RpcInfo -> Substs -> Fetch.Fetcher t m s
-myFetcher s r substs (PleaseAskSMT branchcondition pathconditions continue) =
+concFetcher :: Substs -> SolverGroup -> Fetch.RpcInfo -> Fetch.Fetcher t m s
+concFetcher substs s r (PleaseAskSMT branchcondition pathconditions continue) =
   case simplify (substExpr substs branchcondition) of
     Lit n -> continue <$> pure (Case (n/=0))
     simplifiedExpr -> Fetch.oracle s r (PleaseAskSMT simplifiedExpr pathconditions continue)
-myFetcher s r _ q = Fetch.oracle s r q
+concFetcher _ s r q = Fetch.oracle s r q
+
+concOrSymFetcher :: Maybe SolCall -> SolverGroup -> Fetch.RpcInfo -> Fetch.Fetcher t m s
+concOrSymFetcher (Just c) = concFetcher $ genSubsts c
+concOrSymFetcher Nothing = Fetch.oracle

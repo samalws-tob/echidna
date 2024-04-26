@@ -6,7 +6,7 @@ import Common (testContract', solved, passed)
 import Echidna.Types.Campaign (WorkerType(..))
 
 symbolicTests :: TestTree
-symbolicTests = testGroup "Symbolic tests" $ --if os /= "linux" then [] else
+symbolicTests = testGroup "Symbolic tests" $ if os /= "linux" then [] else
   [ testContract' "symbolic/sym.sol" Nothing Nothing (Just "symbolic/sym.yaml") True SymbolicWorker
       [ ("echidna_sym passed", passed "echidna_sym") ]
 
