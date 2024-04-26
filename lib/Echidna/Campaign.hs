@@ -150,6 +150,8 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
 
   symexecTxs txs = mapM_ symexecTx =<< txsToTxAndVms txs
 
+  -- | Turn a list of transactions into inputs for symexecTx:
+  -- (maybe txn to concolic execute on, vm to symexec on, list of txns we're on top of)
   txsToTxAndVms txs = do
     isConc <- asks (.cfg.campaignConf.symExecConcolic)
     if isConc
@@ -180,6 +182,7 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
     modify' (\ws -> ws { runningThreads = [] })
     lift callback
 
+    -- We can't do callseq vm' [symTx] because callseq might post the full call sequence as an event
     newCoverage <- or <$> mapM (\symTx -> snd <$> callseq vm (txsBase <> [symTx])) symTxs
 
     unless newCoverage (pushWorkerEvent SymNoNewCoverage)

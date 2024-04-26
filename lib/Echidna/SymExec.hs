@@ -45,6 +45,9 @@ import Echidna.Types.Tx (Tx(..), TxCall(..), maxGasPerBlock)
 -- Spawns a new thread; returns its thread ID as the first return value.
 -- The second return value is an MVar which is populated with transactions
 --   once the symbolic execution is finished.
+-- Also takes an optional SolCall argument; this is used as the transaction
+--   to follow during concolic execution. If none is provided, we do full
+--   symbolic execution.
 createSymTx :: EConfig -> Maybe Text -> [SolcContract] -> Maybe SolCall -> VM Concrete RealWorld -> IO (ThreadId, MVar [Tx])
 createSymTx cfg name cs call vm = do
   mainContract <- chooseContract cs name
@@ -95,6 +98,7 @@ exploreContract conf contract call vm = do
   threadId <- takeMVar threadIdChan
   pure (threadId, resultChan)
 
+-- | Turn the expression returned by `interpret` into into SMT2 values to feed into the solver
 manipulateExprInter :: Bool -> Expr End -> [SMT2]
 manipulateExprInter isConc = map (assertProps defaultConfig) . middleStep . map (extractProps . simplify) . flattenExpr . simplify where
   middleStep = if isConc then middleStepConc else id
@@ -150,6 +154,7 @@ modelToTx dst method result =
   case result of
     Sat cex ->
       let
+        -- TODO this doesn't properly handle array types, see hevm's `symAbiArg` and our `genSubsts`
         args = (zip [1..] method.inputs) <&> \(i::Int, (_argName, argType)) ->
           case Map.lookup (Var ("arg" <> T.pack (show i))) cex.vars of
             Just w ->
@@ -171,8 +176,10 @@ modelToTx dst method result =
 
     _ -> Nothing
 
+-- | Symbolic variable -> concrete value mapping used during concolic execution
 type Substs = ([(Text, W256)], [(Text, Addr)])
 
+-- | Mirrors hevm's `symAbiArg` function; whenever that changes, we need to change this too
 genSubsts :: SolCall -> Substs
 genSubsts (_, abiVals) = fold $ zipWith genVal abiVals (T.pack . ("arg" <>) . show <$> ([1..] :: [Int])) where
   genVal (AbiUInt _ i) name = ([(name, fromIntegral i)], [])
@@ -181,14 +188,22 @@ genSubsts (_, abiVals) = fold $ zipWith genVal abiVals (T.pack . ("arg" <>) . sh
   genVal (AbiAddress addr) name = ([], [(name, addr)])
   genVal (AbiBytes n b) name | n > 0 && n <= 32 = ([(name, word b)], [])
   genVal (AbiArray _ _ vals) name = fold $ zipWith genVal (toList vals) [name <> T.pack (show n) | n <- [0..] :: [Int]]
-  genVal _ _ = error "TODO: not yet implemented"
+  genVal _ _ = error "`genSubsts` is not implemented for all API types, mirroring hevm's `symAbiArg` function"
 
+-- | Apply substitutions into an expression
 substExpr :: Substs -> Expr a -> Expr a
 substExpr (sw, sa) = mapExpr go where
   go v@(Var t) = maybe v Lit (lookup t sw)
   go v@(SymAddr t) = maybe v LitAddr (lookup t sa)
   go e = e
 
+-- | Fetcher used during concolic exeuction.
+-- This is the most important function for concolic execution;
+-- it determines what branch `interpret` should take.
+-- We ensure that this fetcher is always used by setting askSMTIter to 0.
+-- We determine what branch to take by substituting concrete values into
+-- the provided `Prop`, and then simplifying.
+-- We fall back on `Fetch.oracle`.
 concFetcher :: Substs -> SolverGroup -> Fetch.RpcInfo -> Fetch.Fetcher t m s
 concFetcher substs s r (PleaseAskSMT branchcondition pathconditions continue) =
   case simplify (substExpr substs branchcondition) of
@@ -196,6 +211,8 @@ concFetcher substs s r (PleaseAskSMT branchcondition pathconditions continue) =
     simplifiedExpr -> Fetch.oracle s r (PleaseAskSMT simplifiedExpr pathconditions continue)
 concFetcher _ s r q = Fetch.oracle s r q
 
+-- | Depending on whether we're doing concolic or full symbolic execution,
+-- choose a fetcher to be used in `interpret` (either `concFetcher` or `Fetch.oracle`).
 concOrSymFetcher :: Maybe SolCall -> SolverGroup -> Fetch.RpcInfo -> Fetch.Fetcher t m s
 concOrSymFetcher (Just c) = concFetcher $ genSubsts c
 concOrSymFetcher Nothing = Fetch.oracle
