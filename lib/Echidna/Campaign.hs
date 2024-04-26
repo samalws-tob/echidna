@@ -121,11 +121,8 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
     flip evalRandT (mkStdGen effectiveSeed) $ do -- unused but needed for callseq
       lift callback
       void $ replayCorpus vm initialCorpus
-      liftIO $ putStrLn "a"
+      symexecTxs []
       mapM_ (symexecTxs . snd) initialCorpus
-      --symexecTx2 (SolCall ("transfer",[AbiAddress 0x00000000000000000000000000000001fffffffE,AbiUInt 256 32790558297004467278291908776918572982082016242176605849684487242399652014150]), vm, [])
-      --symexecTx2 (SolCall ("transfer",[AbiAddress 0xb4c79daB8f259C7Aee6E5b2Aa729821864227e84,AbiUInt 256 1023]), vm, [])
-      liftIO $ putStrLn "b"
       listenerLoop listenerFunc chan nworkers
       pure SymbolicDone
 
@@ -147,45 +144,19 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
   -- but it may be useful to symexec on top of symexec results to produce multi-transaction
   -- chains where each transaction results in new coverage.
   listenerFunc (_, WorkerEvent _ _ (NewCoverage {transactions})) = do
-    --liftIO $ putStrLn "listneerFunc"
     void $ callseq vm transactions
-    --liftIO $ putStrLn "about to symexecTxs from listenerFunc <--------------------"
     symexecTxs transactions
-    --liftIO $ putStrLn "DONE WITH symexecTxs from listenerFunc <------------------"
-  listenerFunc _ = liftIO (putStrLn "other case listneerFunc") >> pure ()
+  listenerFunc _ = pure ()
 
-  symexecTxs txs = {-liftIO (putStrLn "symexecTxs" >> print ((.call)<$>txs)) >>-} (mapM_ symexecTx =<< txsToTxAndVms txs vm [])
+  symexecTxs txs = mapM_ symexecTx =<< txsToTxAndVms txs vm []
 
-  txsToTxAndVms [] _ _ = {-(liftIO $ putStrLn "txsToTxAndVms_final") >> -}pure []
+  txsToTxAndVms [] _ _ = pure []
   txsToTxAndVms (h:t) vm' txsBase = do
-    --liftIO $ putStrLn "txsToTxAndVms_unfinal"
     (_, vm'') <- execTx vm' h
     rest <- txsToTxAndVms t vm'' (txsBase <> [h])
     pure ((h,vm',txsBase):rest)
 
-{-
-  symexecTx2 (SolCall tx, vm', txsBase) = do
-    liftIO $ putStrLn "symexecTx2"
-    liftIO $ print (tx, map (.call) txsBase)
-    cfg <- asks (.cfg)
-    (threadId, symTxsChan) <- liftIO $ createSymTx cfg name cs tx vm'
-
-    modify' (\ws -> ws { runningThreads = [threadId] })
-    lift callback
-
-    symTxs <- liftIO $ takeMVar symTxsChan
-
-    modify' (\ws -> ws { runningThreads = [] })
-    lift callback
-
-    newCoverage <- mapM (\symTx -> snd <$> callseq vm (txsBase <> [symTx])) symTxs
-
-    if not (or newCoverage) then pushWorkerEvent SymNoNewCoverage else pure ()
--}
-
   symexecTx ((Tx {call = SolCall tx}), vm', txsBase) = do
-    --liftIO $ putStrLn "symexecTx"
-    --liftIO $ print (tx, map (.call) txsBase)
     cfg <- asks (.cfg)
     (threadId, symTxsChan) <- liftIO $ createSymTx cfg name cs tx vm'
 
@@ -197,19 +168,9 @@ runSymWorker callback vm dict workerId initialCorpus name cs = do
     modify' (\ws -> ws { runningThreads = [] })
     lift callback
 
-    newCoverage <- mapM (\symTx -> snd <$> callseq vm (txsBase <> [symTx])) symTxs
+    newCoverage <- or <$> mapM (\symTx -> snd <$> callseq vm (txsBase <> [symTx])) symTxs
 
-    if not (or newCoverage) then pushWorkerEvent SymNoNewCoverage else pure () {-do
-      let txsWithNewCoverage = map snd $ filter fst $ zip newCoverage symTxs
-      vms'' <- map snd <$> mapM (execTx vm') txsWithNewCoverage
-      corpusRef <- asks (.corpusRef)
-      corpus <- liftIO $ readIORef corpusRef
-      let
-        corpusTxs = Set.toList $ Set.fromList $ concat $ map snd $ Set.toList corpus
-        symexecTxArgs = [(corpusTx, vm'', txsBase <> [symTx]) | corpusTx <- corpusTxs, (vm'', symTx) <- zip vms'' symTxs]
-      --liftIO $ putStrLn "about to go back into symexecTx with..."
-      --liftIO $ print $ map (\(a,_,b) -> (a.call,map (.call) b)) symexecTxArgs
-      mapM_ symexecTx symexecTxArgs-}
+    unless newCoverage (pushWorkerEvent SymNoNewCoverage)
 
   symexecTx _ = pure ()
 

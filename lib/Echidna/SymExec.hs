@@ -1,4 +1,4 @@
-{-# LANGUAGE DataKinds #-}
+-- {#- OPTIONS_GHC -Wno-gadt-mono-local-binds #-}
 
 module Echidna.SymExec (createSymTx) where
 
@@ -12,6 +12,7 @@ import Data.ByteString.Lazy qualified as BS
 import Data.Foldable (fold)
 import Data.Function ((&))
 import Data.Functor ((<&>))
+import Data.List (singleton)
 import Data.Map qualified as Map
 import Data.Maybe (fromMaybe, mapMaybe, isNothing, listToMaybe, fromJust)
 import Data.Text (Text)
@@ -27,12 +28,12 @@ import Echidna.Types.Signature (SolCall)
 import EVM.ABI (AbiValue(..), Sig(..), decodeAbiValue)
 import EVM.Expr (simplify, simplifyProp)
 import EVM.Fetch qualified as Fetch
-import EVM.SMT (SMTCex(..))
+import EVM.SMT (SMTCex(..), SMT2, assertProps)
 import EVM (loadContract, resetState)
-import EVM.Effects (defaultEnv)
+import EVM.Effects (defaultEnv, defaultConfig)
 import EVM.Solidity (SolcContract(..), Method(..))
-import EVM.Solvers (withSolvers, Solver(Z3), CheckSatResult(Sat), SolverGroup)
-import EVM.SymExec (interpret, runExpr, abstractVM, mkCalldata, produceModels, LoopHeuristic (Naive), flattenExpr)
+import EVM.Solvers (withSolvers, Solver(Z3), CheckSatResult(Sat), SolverGroup, checkSat)
+import EVM.SymExec (interpret, runExpr, abstractVM, mkCalldata, produceModels, LoopHeuristic (Naive), flattenExpr, extractProps)
 import EVM.Types (Addr, VM(..), Frame(..), FrameState(..), VMType(..), Env(..), Expr(..), EType(..), BaseState(..), EvmError(..), Query(..), Prop(..), BranchCondition(..), W256, word256Bytes, (./=), word)
 import EVM.Traversals (mapExpr)
 import Control.Monad.ST (stToIO, RealWorld)
@@ -63,7 +64,6 @@ exploreContract conf contract call vm = do
   if isNothing method_ then pure () else
     flip runReaderT defaultEnv $ withSolvers Z3 (fromIntegral conf.campaignConf.symExecNSolvers) timeout $ \solvers -> do
       threadId <- liftIO $ forkIO $ flip runReaderT defaultEnv $ do
-        ----liftIO $ print method
         let
           dst = conf.solConf.contractAddr
           calldata@(cd, constraints) = mkCalldata (Just (Sig method.methodSignature (snd <$> method.inputs))) []
@@ -84,23 +84,9 @@ exploreContract conf contract call vm = do
                           & #state % #stack .~ []
                           & #config % #baseState .~ AbstractBase
                           & #env % #contracts .~ (Map.union vmSym'.env.contracts vm.env.contracts)
-        ----liftIO $ putStrLn "interpreting"
         exprInter <- interpret (myFetcher solvers rpcInfo (genSubsts call)) maxIters askSmtIters Naive vm' runExpr
-        ----liftIO $ putStrLn "after interpreting"
-        --liftIO $ putStrLn "doing one foreach before"
-        --liftIO $ mapM_ (const $ putStrLn "A") (flattenExpr (simplify exprInter))
-        --liftIO $ mapM_ (const $ putStrLn "A") (flattenExpr exprInter)
-        --liftIO $ putStrLn "before vs after" >> print (length (flattenExpr (simplify exprInter))) >> print (length (manipulateExprInter exprInter))
-        let asdf = manipulateExprInter1 exprInter
-        let bsdf = concatMap manipulateExprInter2 $ map simplify $ flattenExpr $ simplify exprInter
-        ----liftIO $ putStrLn "lena is" >> print (length asdf)
-        ----liftIO $ putStrLn "lenb is" >> print (length bsdf)
-        ----liftIO $ putStrLn "bsdf is" >> print ((\(Success p _ _ _) -> p) <$> bsdf)
-        res <- liftIO $ flip mapConcurrently bsdf $ (\m -> {-putStrLn "producing model" >>-} flip runReaderT defaultEnv (produceModels solvers m) >>= (\r -> {-putStrLn "done producing a model" >>-} pure r))
-        ----liftIO $ putStrLn "done symbexing"
-        let ress = mapMaybe (modelToTx dst method) $ concat res
-        ----liftIO $ putStrLn "ress is"
-        ----liftIO $ print $ (.call) <$> ress
+        res <- liftIO $ mapConcurrently (checkSat solvers) $ manipulateExprInter exprInter
+        let ress = mapMaybe (modelToTx dst method) res
 
         liftIO $ putMVar resultChan ress
         liftIO $ putMVar doneChan ()
@@ -110,18 +96,9 @@ exploreContract conf contract call vm = do
   threadId <- takeMVar threadIdChan
   pure (threadId, resultChan)
 
-manipulateExprInter1 = map simplify . filter filterFn . flattenExpr . simplify where
-  filterFn (Failure _ _ (Revert _)) = False
-  filterFn _ = True
-
-manipulateExprInter2 :: Expr End -> [Expr End]
-manipulateExprInter2 e = (\p -> Success [p] undefined undefined undefined {- TODO can we just go from props instead of doing this -}) <$> go (PBool True) props where
-  props :: [Prop]
-  props = case e of
-            Partial p _ _ -> p
-            Failure p _ _ -> p
-            Success p _ _ _ -> p
-            ITE _ _ _ -> error "shouldnt reach here, TODO better msg"
+manipulateExprInter :: Expr End -> [SMT2]
+manipulateExprInter = map (assertProps defaultConfig . singleton) . concatMap (go (PBool True) . extractProps) . map simplify . flattenExpr . simplify where
+  go :: Prop -> [Prop] -> [Prop]
   go acc [] = []
   go acc (h:t) = (PNeg h `PAnd` acc):(go (h `PAnd` acc) t)
 
@@ -167,8 +144,8 @@ frameStateMakeSymbolic fs
 frameMakeSymbolic :: Frame Concrete s -> Frame Symbolic s
 frameMakeSymbolic fr = Frame { context = fr.context, state = frameStateMakeSymbolic fr.state }
 
-modelToTx :: Addr -> Method -> (Expr 'End, CheckSatResult) -> Maybe Tx
-modelToTx dst method (_end, result) =
+modelToTx :: Addr -> Method -> CheckSatResult -> Maybe Tx
+modelToTx dst method result =
   case result of
     Sat cex ->
       let
